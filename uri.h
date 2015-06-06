@@ -5,12 +5,18 @@
 #ifndef URI_H_
 #define URI_H_
 
-#include <stdbool.h>
 #include <stdint.h>
-
 
 // Forwards declaration from lexer.h.
 struct lexer;
+
+
+enum uri_parse_status {
+  URI_PARSE_BAD = 0,
+  URI_PARSE_OK,
+  URI_PARSE_ENOMEM,
+};
+
 
 struct uri {
   char *scheme;
@@ -24,12 +30,12 @@ struct uri {
 };
 
 
-bool uri_init(struct uri *uri);
-bool uri_destroy(struct uri *uri);
-bool uri_parse(struct uri *uri, struct lexer *lex);
-bool uri_parse_abs_path(struct uri *uri, struct lexer *lex);
-bool uri_parse_absolute_uri(struct uri *uri, struct lexer *lex);
-bool uri_parse_authority(struct uri *uri, struct lexer *lex);
-bool uri_parse_relative_uri(struct uri *uri, struct lexer *lex);
+enum uri_parse_status uri_init(struct uri *uri);
+enum uri_parse_status uri_destroy(struct uri *uri);
+enum uri_parse_status uri_parse(struct uri *uri, struct lexer *lex);
+enum uri_parse_status uri_parse_abs_path(struct uri *uri, struct lexer *lex);
+enum uri_parse_status uri_parse_absolute_uri(struct uri *uri, struct lexer *lex);
+enum uri_parse_status uri_parse_authority(struct uri *uri, struct lexer *lex);
+enum uri_parse_status uri_parse_relative_uri(struct uri *uri, struct lexer *lex);
 
 #endif  // URI_H_

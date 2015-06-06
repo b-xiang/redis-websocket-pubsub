@@ -4,9 +4,10 @@ LDFLAGS = $(shell pkg-config --libs hiredis) $(shell pkg-config --libs libevent)
 
 .PHONY: all clean
 
-all: test-pubsub
+all: test-pubsub test-http
 
 clean:
 	-rm -f *.o test-pubsub
 
+test-http: test-http.o http.o lexer.o uri.o
 test-pubsub: test-pubsub.o http.o lexer.o uri.o

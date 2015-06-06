@@ -5,11 +5,19 @@
 #ifndef HTTP_H_
 #define HTTP_H_
 
-#include <stdbool.h>
 #include <stdint.h>
+
+#include "uri.h"
 
 // Forwards declaration from lexer.h.
 struct lexer;
+
+
+enum http_request_parse_status {
+  HTTP_REQUEST_PARSE_BAD = 0,
+  HTTP_REQUEST_PARSE_OK,
+  HTTP_REQUEST_PARSE_ENOMEM,
+};
 
 
 extern const char *const HTTP_METHOD_CONNECT;
@@ -31,12 +39,13 @@ struct http_request {
   uint32_t version_major;
   uint32_t version_minor;
   const char *method;
+  char *uri;
   struct http_headers headers;
 };
 
 
-bool http_request_init(struct http_request *req);
-bool http_request_destroy(struct http_request *req);
-bool http_request_parse(struct http_request *req, struct lexer *lex);
+enum http_request_parse_status http_request_init(struct http_request *req);
+enum http_request_parse_status http_request_destroy(struct http_request *req);
+enum http_request_parse_status http_request_parse(struct http_request *req, struct lexer *lex);
 
 #endif  // HTTP_H_

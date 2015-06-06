@@ -4,14 +4,12 @@
  **/
 #include "http.h"
 
-#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "lexer.h"
-#include "uri.h"
 
 const char *const HTTP_METHOD_CONNECT = "CONNECT";
 const char *const HTTP_METHOD_DELETE = "DELETE";
@@ -26,12 +24,12 @@ const char *const HTTP_METHOD_TRACE = "TRACE";
 /**
  * HTTP-Version = "HTTP" "/" 1*DIGIT "." 1*DIGIT
  **/
-static bool
+static enum http_request_parse_status
 parse_http_version(struct lexer *const lex) {
   uint32_t version_major, version_minor;
 
   // "HTTP"
-  if (lexer_nremaining(lex) < 4 || lexer_strcmp(lex, "HTTP") != 0) {
+  if (lexer_nremaining(lex) < 4 || lexer_memcmp(lex, "HTTP", 4) != 0) {
     goto fail;
   }
   lexer_consume(lex, 4);
@@ -62,10 +60,10 @@ parse_http_version(struct lexer *const lex) {
   }
 
   fprintf(stderr, "HTTP-Version: major=%u minor=%u\n", version_major, version_minor);
-  return true;
+  return HTTP_REQUEST_PARSE_OK;
 
 fail:
-  return false;
+  return HTTP_REQUEST_PARSE_BAD;
 }
 
 
@@ -81,112 +79,158 @@ fail:
  *                | extension-method
  * extension-method = token
  **/
-static bool
+static enum http_request_parse_status
 parse_http_method(struct http_request *const req, struct lexer *const lex) {
   const size_t remaining = lexer_nremaining(lex);
   if (remaining >= 3) {
-    if (lexer_strcmp(lex, "GET") == 0) {
+    if (lexer_memcmp(lex, "GET", 3) == 0) {
       req->method = HTTP_METHOD_GET;
       lexer_consume(lex, 3);
-      return true;
+      return HTTP_REQUEST_PARSE_OK;
     }
-    else if (lexer_strcmp(lex, "PUT") == 0) {
+    else if (lexer_memcmp(lex, "PUT", 3) == 0) {
       req->method = HTTP_METHOD_PUT;
       lexer_consume(lex, 3);
-      return true;
+      return HTTP_REQUEST_PARSE_OK;
     }
   }
   if (remaining >= 4) {
-    if (lexer_strcmp(lex, "HEAD") == 0) {
+    if (lexer_memcmp(lex, "HEAD", 4) == 0) {
       req->method = HTTP_METHOD_HEAD;
       lexer_consume(lex, 4);
-      return true;
+      return HTTP_REQUEST_PARSE_OK;
     }
-    else if (lexer_strcmp(lex, "POST") == 0) {
+    else if (lexer_memcmp(lex, "POST", 4) == 0) {
       req->method = HTTP_METHOD_POST;
       lexer_consume(lex, 4);
-      return true;
+      return HTTP_REQUEST_PARSE_OK;
     }
   }
-  if (remaining >= 5 && lexer_strcmp(lex, "TRACE") == 0) {
+  if (remaining >= 5 && lexer_memcmp(lex, "TRACE", 5) == 0) {
     req->method = HTTP_METHOD_TRACE;
     lexer_consume(lex, 5);
-    return true;
+    return HTTP_REQUEST_PARSE_OK;
   }
-  if (remaining >= 6 && lexer_strcmp(lex, "DELETE") == 0) {
+  if (remaining >= 6 && lexer_memcmp(lex, "DELETE", 5) == 0) {
     req->method = HTTP_METHOD_DELETE;
     lexer_consume(lex, 6);
-    return true;
+    return HTTP_REQUEST_PARSE_OK;
   }
   if (remaining >= 7) {
-    if (lexer_strcmp(lex, "CONNECT") == 0) {
+    if (lexer_memcmp(lex, "CONNECT", 7) == 0) {
       req->method = HTTP_METHOD_CONNECT;
       lexer_consume(lex, 7);
-      return true;
+      return HTTP_REQUEST_PARSE_OK;
     }
-    else if (lexer_strcmp(lex, "OPTIONS") == 0) {
+    else if (lexer_memcmp(lex, "OPTIONS", 7) == 0) {
       req->method = HTTP_METHOD_OPTIONS;
       lexer_consume(lex, 7);
-      return true;
+      return HTTP_REQUEST_PARSE_OK;
     }
   }
-  return false;
+  return HTTP_REQUEST_PARSE_BAD;
 }
 
 
 /**
  * Request-URI = "*" | absoluteURI | abs_path | authority
  **/
-static bool
+static enum http_request_parse_status
 parse_http_request_uri(struct http_request *const req, struct lexer *const lex) {
-  (void)req;  // TODO
-  (void)lex;  // TODO
-  return false;
+  if (lexer_nremaining(lex) == 0) {
+    return HTTP_REQUEST_PARSE_BAD;
+  }
+
+  if (lexer_peek(lex) == '*') {
+    req->uri = malloc(2);
+    if (req->uri == NULL) {
+      return HTTP_REQUEST_PARSE_ENOMEM;
+    }
+    req->uri[0] = '*';
+    req->uri[1] = '\0';
+    return HTTP_REQUEST_PARSE_OK;
+  }
+
+  struct uri uri;
+  enum uri_parse_status status = uri_init(&uri);
+  if (status == URI_PARSE_ENOMEM) {
+    return HTTP_REQUEST_PARSE_ENOMEM;
+  }
+
+  status = uri_parse_absolute_uri(&uri, lex);
+  if (status == URI_PARSE_ENOMEM) {
+    return HTTP_REQUEST_PARSE_ENOMEM;
+  }
+  else if (status == URI_PARSE_BAD) {
+    status = uri_parse_abs_path(&uri, lex);
+  }
+
+  if (status == URI_PARSE_ENOMEM) {
+    return HTTP_REQUEST_PARSE_ENOMEM;
+  }
+  else if (status == URI_PARSE_BAD) {
+    uri_parse_authority(&uri, lex);
+  }
+
+  if (status == URI_PARSE_ENOMEM) {
+    return HTTP_REQUEST_PARSE_ENOMEM;
+  }
+  if (uri_destroy(&uri) == URI_PARSE_ENOMEM) {
+    return HTTP_REQUEST_PARSE_ENOMEM;
+  }
+
+  return (status == URI_PARSE_OK) ? HTTP_REQUEST_PARSE_OK : HTTP_REQUEST_PARSE_BAD;
 }
 
 
 /**
  * Request-Line = Method SP Request-URI SP HTTP-Version CRLF
  **/
-static bool
+static enum http_request_parse_status
 parse_http_line_request(struct http_request *const req, struct lexer *const lex) {
   // Method
+  fprintf(stderr, "[parse_http_line_request] before parse_http_method\n");
   if (!parse_http_method(req, lex)) {
     goto fail;
   }
 
   // SP
-  if (lexer_nremaining(lex) < 1 || lexer_peek(lex) != ' ') {
+  fprintf(stderr, "[parse_http_line_request] before SP\n");
+  if (lexer_nremaining(lex) == 0 || lexer_peek(lex) != ' ') {
     goto fail;
   }
   lexer_consume(lex, 1);
 
   // Request-URI
+  fprintf(stderr, "[parse_http_line_request] before request-uri\n");
   if (!parse_http_request_uri(req, lex)) {
     goto fail;
   }
 
   // SP
-  if (lexer_nremaining(lex) < 1 || lexer_peek(lex) != ' ') {
+  fprintf(stderr, "[parse_http_line_request] before SP '%c'\n", lexer_peek(lex));
+  if (lexer_nremaining(lex) == 0 || lexer_peek(lex) != ' ') {
     goto fail;
   }
   lexer_consume(lex, 1);
 
   // HTTP-Version
+  fprintf(stderr, "[parse_http_line_request] before HTTP-Version\n");
   if (!parse_http_version(lex)) {
     goto fail;
   }
 
   // CRLF
-  if (lexer_nremaining(lex) < 2 || lexer_strcmp(lex, "\r\n") != 0) {
+  fprintf(stderr, "[parse_http_line_request] before CRLF\n");
+  if (lexer_nremaining(lex) < 2 || lexer_memcmp(lex, "\r\n", 2) != 0) {
     goto fail;
   }
   lexer_consume(lex, 2);
 
-  return true;
+  return HTTP_REQUEST_PARSE_OK;
 
 fail:
-  return false;
+  return HTTP_REQUEST_PARSE_BAD;
 }
 
 
@@ -198,49 +242,57 @@ fail:
  *           CRLF
  *           [ message-body ]          ; Section 4.3
  **/
-static bool
+static enum http_request_parse_status
 parse_http_request(struct http_request *const req, struct lexer *const lex) {
-  if (!parse_http_line_request(req, lex)) {
-    return false;
+  enum http_request_parse_status status = parse_http_line_request(req, lex);
+  if (status != HTTP_REQUEST_PARSE_OK) {
+    return status;
   }
 
-  return true;
+  // TODO
+
+  return HTTP_REQUEST_PARSE_OK;
 }
 
 
 // ================================================================================================
 // Public API for `http_request`.
 // ================================================================================================
-bool
+enum http_request_parse_status
 http_request_init(struct http_request *const req) {
   if (req == NULL) {
-    return false;
+    return HTTP_REQUEST_PARSE_BAD;
   }
 
   memset(req, 0, sizeof(struct http_request));
-  return true;
+  return HTTP_REQUEST_PARSE_OK;
 }
 
 
-bool
+enum http_request_parse_status
 http_request_destroy(struct http_request *const req) {
-  (void)req;
-  return true;
+  if (req == NULL) {
+    return HTTP_REQUEST_PARSE_BAD;
+  }
+
+  free(req->uri);
+  return HTTP_REQUEST_PARSE_OK;
 }
 
 
 /**
  * https://tools.ietf.org/html/rfc2616#section-4
  **/
-bool
+enum http_request_parse_status
 http_request_parse(struct http_request *const req, struct lexer *const lex) {
   if (req == NULL || lex == NULL) {
-    return false;
+    return HTTP_REQUEST_PARSE_BAD;
   }
 
-  if (!parse_http_request(req, lex)) {
-    return false;
+  enum http_request_parse_status status = parse_http_request(req, lex);
+  if (status != HTTP_REQUEST_PARSE_OK) {
+    return status;
   }
 
-  return true;
+  return HTTP_REQUEST_PARSE_OK;
 }

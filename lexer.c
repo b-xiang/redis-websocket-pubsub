@@ -19,6 +19,14 @@ lexer_init(struct lexer *const lex, const char *const start, const char *const e
 }
 
 
+bool
+lexer_destroy(struct lexer *const lex) {
+  (void)lex;
+  // Nothing to do here.
+  return true;
+}
+
+
 /**
  * LWS = [CRLF] 1*( SP | HT )
  **/
@@ -31,7 +39,7 @@ lexer_consume_lws(struct lexer *const lex) {
   memcpy(&orig, lex, sizeof(struct lexer));
 
   // Try to consume the rule.
-  if (lexer_nremaining(lex) >= 2 && lexer_strcmp(lex, "\r\n")) {
+  if (lexer_nremaining(lex) >= 2 && lexer_memcmp(lex, "\r\n", 2)) {
     lexer_consume(lex, 2);
     changed = true;
   }

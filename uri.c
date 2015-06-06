@@ -4,7 +4,6 @@
  **/
 #include "uri.h"
 
-#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -172,14 +171,14 @@ static const uint16_t CTYPES[128] = {
 /**
  * scheme = alpha *( alpha | digit | "+" | "-" | "." )
  **/
-static bool
+static enum uri_parse_status
 uri_parse_scheme(struct uri *const uri, struct lexer *const lex) {
   const char *const start = lexer_upto(lex);
 
   for (unsigned int i = 0; ; ++i) {
     if (lexer_nremaining(lex) == 0) {
       if (i == 0) {
-        return false;
+        return URI_PARSE_BAD;
       }
       else {
         break;
@@ -189,12 +188,12 @@ uri_parse_scheme(struct uri *const uri, struct lexer *const lex) {
     const char c = lexer_peek(lex);
     if (i == 0) {
       if (!HAS_CTYPE(c, CTYPE_ALPHA)) {
-        return false;
+        return URI_PARSE_BAD;
       }
     }
     else if (!HAS_CTYPE(c, CTYPE_SCHEME)) {
       if (i == 0) {
-        return false;
+        return URI_PARSE_BAD;
       }
       else {
         break;
@@ -208,20 +207,19 @@ uri_parse_scheme(struct uri *const uri, struct lexer *const lex) {
   const size_t nbytes = end - start;
   uri->scheme = malloc(nbytes + 1);
   if (uri->scheme == NULL) {
-    perror("malloc failed");
-    exit(1);  // TODO do something better.
+    return URI_PARSE_ENOMEM;
   }
   memcpy((void *)uri->scheme, start, nbytes);
   uri->scheme[nbytes] = '\0';
 
-  return true;
+  return URI_PARSE_OK;
 }
 
 
 /**
  * userinfo = *( unreserved | escaped | ";" | ":" | "&" | "=" | "+" | "$" | "," )
  **/
-static bool
+static enum uri_parse_status
 uri_parse_userinfo(struct uri *const uri, struct lexer *const lex) {
   const char *const start = lexer_upto(lex);
 
@@ -247,14 +245,13 @@ uri_parse_userinfo(struct uri *const uri, struct lexer *const lex) {
   if (nbytes != 0) {
     uri->userinfo = malloc(nbytes + 1);
     if (uri->userinfo == NULL) {
-      perror("malloc failed");
-      exit(1);  // TODO do something better.
+      return URI_PARSE_ENOMEM;
     }
     memcpy((void *)uri->userinfo, start, nbytes);
     uri->userinfo[nbytes] = '\0';
   }
 
-  return true;
+  return URI_PARSE_OK;
 }
 
 
@@ -263,7 +260,7 @@ uri_parse_userinfo(struct uri *const uri, struct lexer *const lex) {
  * domainlabel  = alphanum | alphanum *( alphanum | "-" ) alphanum
  * toplabel     = alpha    | alpha    *( alphanum | "-" ) alphanum
  **/
-static bool
+static enum uri_parse_status
 uri_parse_hostname(struct lexer *const lex) {
   enum State {
     STATE_1,
@@ -373,18 +370,18 @@ uri_parse_hostname(struct lexer *const lex) {
     }
   }
 
-  return true;
+  return URI_PARSE_OK;
 
 fail:
   memcpy(lex, &orig, sizeof(struct lexer));
-  return false;
+  return URI_PARSE_BAD;
 }
 
 
 /**
  * IPv4address = 1*digit "." 1*digit "." 1*digit "." 1*digit
  **/
-static bool
+static enum uri_parse_status
 uri_parse_ipv4address(struct lexer *const lex) {
   // Take a copy of the lexer.
   struct lexer orig;
@@ -413,11 +410,11 @@ uri_parse_ipv4address(struct lexer *const lex) {
     }
   }
 
-  return true;
+  return URI_PARSE_OK;
 
 fail:
   memcpy(lex, &orig, sizeof(struct lexer));
-  return false;
+  return URI_PARSE_BAD;
 }
 
 
@@ -426,11 +423,11 @@ fail:
  * host     = hostname | IPv4address
  * port     = *digit
  **/
-static bool
+static enum uri_parse_status
 uri_parse_hostport(struct uri *const uri, struct lexer *const lex) {
   // host
-  if (!uri_parse_hostname(lex) || !uri_parse_ipv4address(lex)) {
-    return false;
+  if (!uri_parse_hostname(lex) && !uri_parse_ipv4address(lex)) {
+    return URI_PARSE_BAD;
   }
 
   // [ ":" port ]
@@ -445,21 +442,21 @@ uri_parse_hostport(struct uri *const uri, struct lexer *const lex) {
     }
   }
 
-  return true;
+  return URI_PARSE_OK;
 }
 
 
 /**
  * server = [ [ userinfo "@" ] hostport ]
  **/
-static bool
+static enum uri_parse_status
 uri_parse_server(struct uri *const uri, struct lexer *const lex) {
   struct lexer orig;
   memcpy(&orig, lex, sizeof(struct lexer));
 
   // userinfo
   if (!uri_parse_userinfo(uri, lex)) {
-    return false;
+    return URI_PARSE_BAD;
   }
 
   // [ "@" ]
@@ -472,14 +469,14 @@ uri_parse_server(struct uri *const uri, struct lexer *const lex) {
     memcpy(lex, &orig, sizeof(struct lexer));
   }
 
-  return true;
+  return URI_PARSE_OK;
 }
 
 
 /**
  * reg_name = 1*( unreserved | escaped | "$" | "," | ";" | ":" | "@" | "&" | "=" | "+" )
  **/
-static bool
+static enum uri_parse_status
 uri_parse_reg_name(struct lexer *const lex) {
   struct lexer orig;
   memcpy(&orig, lex, sizeof(struct lexer));
@@ -511,27 +508,48 @@ uri_parse_reg_name(struct lexer *const lex) {
     }
   }
 
-  return true;
+  return URI_PARSE_OK;
 
 fail:
   memcpy(lex, &orig, sizeof(struct lexer));
-  return false;
+  return URI_PARSE_BAD;
 }
 
 
 /**
  * authority = server | reg_name
  **/
-bool
+enum uri_parse_status
 uri_parse_authority(struct uri *const uri, struct lexer *const lex) {
-  return uri_parse_reg_name(lex) || uri_parse_server(uri, lex);
+  const char *const start = lexer_upto(lex);
+
+  enum uri_parse_status status = uri_parse_reg_name(lex);
+  if (status == URI_PARSE_ENOMEM) {
+    return status;
+  }
+  else if (status == URI_PARSE_BAD) {
+    status = uri_parse_server(uri, lex);
+  }
+
+  if (status == URI_PARSE_OK) {
+    const char *const end = lexer_upto(lex);
+    const size_t nbytes = end - start;
+    uri->netloc = malloc(nbytes + 1);
+    if (uri->netloc == NULL) {
+      return URI_PARSE_OK;
+    }
+    memcpy((void *)uri->netloc, start, nbytes);
+    uri->netloc[nbytes] = '\0';
+  }
+
+  return status;
 }
 
 
 /**
  * rel_segment = 1*( unreserved | escaped | ";" | "@" | "&" | "=" | "+" | "$" | "," )
  **/
-static bool
+static enum uri_parse_status
 uri_parse_rel_segment(struct lexer *const lex) {
   struct lexer orig;
   memcpy(&orig, lex, sizeof(struct lexer));
@@ -563,11 +581,11 @@ uri_parse_rel_segment(struct lexer *const lex) {
     }
   }
 
-  return true;
+  return URI_PARSE_OK;
 
 fail:
   memcpy(lex, &orig, sizeof(struct lexer));
-  return false;
+  return URI_PARSE_BAD;
 }
 
 
@@ -593,7 +611,7 @@ uri_parse_path_segments(struct lexer *const lex) {
     }
 
     // segment
-    while (true) {
+    while (1) {
       const char c = lexer_peek(lex);
       if (HAS_CTYPE(c, CTYPE_PCHAR)) {
         lexer_consume(lex, 1);
@@ -605,11 +623,11 @@ uri_parse_path_segments(struct lexer *const lex) {
         break;
       }
     }
-    while (true) {
+    while (1) {
       if (lexer_nremaining(lex) == 0 || lexer_peek(lex) != ';') {
         break;
       }
-      while (true) {
+      while (1) {
         const char c = lexer_peek(lex);
         if (HAS_CTYPE(c, CTYPE_PCHAR)) {
           lexer_consume(lex, 1);
@@ -629,17 +647,17 @@ uri_parse_path_segments(struct lexer *const lex) {
 /**
  * abs_path = "/" path_segments
  **/
-bool
+enum uri_parse_status
 uri_parse_abs_path(struct uri *const uri, struct lexer *const lex) {
   if (uri == NULL || lex == NULL) {
-    return false;
+    return URI_PARSE_BAD;
   }
 
   const char *const start = lexer_upto(lex);
 
   // "/"
   if (lexer_nremaining(lex) == 0 || lexer_peek(lex) != '/') {
-    return false;
+    return URI_PARSE_BAD;
   }
   lexer_consume(lex, 1);
 
@@ -650,26 +668,25 @@ uri_parse_abs_path(struct uri *const uri, struct lexer *const lex) {
   const size_t nbytes = end - start;
   uri->path = malloc(nbytes + 1);
   if (uri->path == NULL) {
-    perror("malloc failed");
-    exit(1);  // TODO do something better.
+    return URI_PARSE_ENOMEM;
   }
   memcpy(uri->path, start, nbytes);
   uri->path[nbytes] = '\0';
 
-  return true;
+  return URI_PARSE_OK;
 }
 
 
 /**
  * rel_path = rel_segment [ abs_path ]
  **/
-static bool
+static enum uri_parse_status
 uri_parse_rel_path(struct uri *const uri, struct lexer *const lex) {
   const char *const start = lexer_upto(lex);
 
   // rel_segment
   if (!uri_parse_rel_segment(lex)) {
-    return false;
+    return URI_PARSE_BAD;
   }
 
   // [ abs_path ]
@@ -681,47 +698,47 @@ uri_parse_rel_path(struct uri *const uri, struct lexer *const lex) {
   free(uri->path);
   uri->path = malloc(nbytes + 1);
   if (uri->path == NULL) {
-    perror("malloc failed");
-    exit(1);  // TODO do something better.
+    return URI_PARSE_ENOMEM;
   }
   memcpy(uri->path, start, nbytes);
   uri->path[nbytes] = '\0';
 
-  return true;
+  return URI_PARSE_OK;
 }
 
 
 /**
  * net_path  = "//" authority [ abs_path ]
  **/
-static bool
+static enum uri_parse_status
 uri_parse_net_path(struct uri *const uri, struct lexer *const lex) {
   // "//"
-  if (lexer_nremaining(lex) < 2 || lexer_strcmp(lex, "//") != 0) {
-    return false;
+  if (lexer_nremaining(lex) < 2 || lexer_memcmp(lex, "//", 2) != 0) {
+    return URI_PARSE_BAD;
   }
+  lexer_consume(lex, 2);
 
   // authority
   if (!uri_parse_authority(uri, lex)) {
-    return false;
+    return URI_PARSE_BAD;
   }
 
   // [ abs_path ]
   uri_parse_abs_path(uri, lex);
 
-  return true;
+  return URI_PARSE_OK;
 }
 
 /**
  * fragment = *uric
  * uric     = reserved | unreserved | escaped
  **/
-static void
+static enum uri_parse_status
 uri_parse_fragment(struct uri *const uri, struct lexer *const lex) {
   const char *const start = lexer_upto(lex);
 
   // fragment
-  while (true) {
+  while (1) {
     if (lexer_nremaining(lex) == 0) {
       break;
     }
@@ -741,12 +758,13 @@ uri_parse_fragment(struct uri *const uri, struct lexer *const lex) {
   if (nbytes != 0) {
     uri->fragment = malloc(nbytes + 1);
     if (uri->fragment == NULL) {
-      perror("malloc failed");
-      exit(1);  // TODO Do something better.
+      return URI_PARSE_ENOMEM;
     }
     memcpy(uri->fragment, start, nbytes);
     uri->fragment[nbytes] = '\0';
   }
+
+  return URI_PARSE_OK;
 }
 
 
@@ -754,12 +772,12 @@ uri_parse_fragment(struct uri *const uri, struct lexer *const lex) {
  * query = *uric
  * uric  = reserved | unreserved | escaped
  **/
-static void
+static enum uri_parse_status
 uri_parse_query(struct uri *const uri, struct lexer *const lex) {
   const char *const start = lexer_upto(lex);
 
   // query
-  while (true) {
+  while (1) {
     if (lexer_nremaining(lex) == 0) {
       break;
     }
@@ -779,32 +797,37 @@ uri_parse_query(struct uri *const uri, struct lexer *const lex) {
   if (nbytes != 0) {
     uri->query = malloc(nbytes + 1);
     if (uri->query == NULL) {
-      perror("malloc failed");
-      exit(1);  // TODO Do something better.
+      return URI_PARSE_ENOMEM;
     }
     memcpy(uri->query, start, nbytes);
     uri->query[nbytes] = '\0';
   }
+
+  return URI_PARSE_OK;
 }
 
 
 /**
  * hier_part = ( net_path | abs_path ) [ "?" query ]
  **/
-static bool
+static enum uri_parse_status
 uri_parse_hier_part(struct uri *const uri, struct lexer *const lex) {
   // net_path | abs_path | rel_path
-  if (!uri_parse_net_path(uri, lex) || !uri_parse_abs_path(uri, lex)) {
-    return false;
+  if (!uri_parse_net_path(uri, lex) && !uri_parse_abs_path(uri, lex)) {
+    return URI_PARSE_BAD;
   }
 
   // [ "?" query ]
   if (lexer_nremaining(lex) != 0 && lexer_peek(lex) == '?') {
     lexer_consume(lex, 1);
-    uri_parse_query(uri, lex);
+
+    enum uri_parse_status status = uri_parse_query(uri, lex);
+    if (status != URI_PARSE_OK) {
+      return status;
+    }
   }
 
-  return true;
+  return URI_PARSE_OK;
 }
 
 
@@ -813,11 +836,11 @@ uri_parse_hier_part(struct uri *const uri, struct lexer *const lex) {
  * uric_no_slash = unreserved | escaped | ";" | "?" | ":" | "@" | "&" | "=" | "+" | "$" | ","
  * uric          = reserved | unreserved | escaped
  **/
-static bool
+static enum uri_parse_status
 uri_parse_opaque_part(struct lexer *const lex) {
   // uric_no_slash
   if (lexer_nremaining(lex) == 0) {
-    return false;
+    return URI_PARSE_BAD;
   }
   else if (HAS_CTYPE(lexer_peek(lex), CTYPE_URIC_NO_SLASH)) {
     lexer_consume(lex, 1);
@@ -826,11 +849,11 @@ uri_parse_opaque_part(struct lexer *const lex) {
     lexer_consume(lex, 3);
   }
   else {
-    return false;
+    return URI_PARSE_BAD;
   }
 
   // *uric
-  while (true) {
+  while (1) {
     if (lexer_nremaining(lex) == 0) {
       break;
     }
@@ -845,28 +868,28 @@ uri_parse_opaque_part(struct lexer *const lex) {
     }
   }
 
-  return true;
+  return URI_PARSE_OK;
 }
 
 
 // ================================================================================================
 // Public API for `uri`.
 // ================================================================================================
-bool
+enum uri_parse_status
 uri_init(struct uri *const uri) {
   if (uri == NULL) {
-    return false;
+    return URI_PARSE_BAD;
   }
 
   memset(uri, 0, sizeof(struct uri));
-  return true;
+  return URI_PARSE_OK;
 }
 
 
-bool
+enum uri_parse_status
 uri_destroy(struct uri *const uri) {
   if (uri == NULL) {
-    return false;
+    return URI_PARSE_BAD;
   }
 
   free((void *)uri->scheme);
@@ -876,39 +899,43 @@ uri_destroy(struct uri *const uri) {
   free((void *)uri->query);
   free((void *)uri->fragment);
   free((void *)uri->userinfo);
-  return true;
+  return URI_PARSE_OK;
 }
 
 /**
  * URI-reference = [ absoluteURI | relativeURI ] [ "#" fragment ]
  **/
-bool
+enum uri_parse_status
 uri_parse(struct uri *const uri, struct lexer *const lex) {
   if (uri == NULL || lex == NULL) {
-    return false;
+    return URI_PARSE_BAD;
   }
 
   if (!uri_parse_absolute_uri(uri, lex) && !uri_parse_relative_uri(uri, lex)) {
-    return false;
+    return URI_PARSE_BAD;
   }
 
   // [ "#" fragment ]
   if (lexer_nremaining(lex) != 0 && lexer_peek(lex) == '#') {
     lexer_consume(lex, 1);
-    uri_parse_fragment(uri, lex);
+
+    enum uri_parse_status status = uri_parse_fragment(uri, lex);
+    if (status != URI_PARSE_OK) {
+      return status;
+    }
   }
 
-  return true;
+  return URI_PARSE_OK;
 }
 
 
 /**
  * absoluteURI   = scheme ":" ( hier_part | opaque_part )
  **/
-bool
+enum uri_parse_status
 uri_parse_absolute_uri(struct uri *const uri, struct lexer *const lex) {
   if (uri == NULL || lex == NULL) {
-    return false;
+    return URI_PARSE_BAD;
   }
 
   struct lexer orig;
@@ -926,37 +953,41 @@ uri_parse_absolute_uri(struct uri *const uri, struct lexer *const lex) {
   lexer_consume(lex, 1);
 
   // hier_part | opaque_part
-  if (!uri_parse_hier_part(uri, lex) || !uri_parse_opaque_part(lex)) {
+  if (!uri_parse_hier_part(uri, lex) && !uri_parse_opaque_part(lex)) {
     goto fail;
   }
 
-  return true;
+  return URI_PARSE_OK;
 
 fail:
   memcpy(lex, &orig, sizeof(struct lexer));
-  return false;
+  return URI_PARSE_BAD;
 }
 
 
 /**
  * relativeURI = ( net_path | abs_path | rel_path ) [ "?" query ]
  **/
-bool
+enum uri_parse_status
 uri_parse_relative_uri(struct uri *const uri, struct lexer *const lex) {
   if (uri == NULL || lex == NULL) {
-    return false;
+    return URI_PARSE_BAD;
   }
 
   // net_path | abs_path | rel_path
-  if (!uri_parse_net_path(uri, lex) || !uri_parse_abs_path(uri, lex) || !uri_parse_rel_path(uri, lex)) {
-    return false;
+  if (!uri_parse_net_path(uri, lex) && !uri_parse_abs_path(uri, lex) && !uri_parse_rel_path(uri, lex)) {
+    return URI_PARSE_BAD;
   }
 
   // [ "?" query ]
   if (lexer_nremaining(lex) != 0 && lexer_peek(lex) == '?') {
     lexer_consume(lex, 1);
-    uri_parse_query(uri, lex);
+
+    enum uri_parse_status status = uri_parse_query(uri, lex);
+    if (status != URI_PARSE_OK) {
+      return status;
+    }
   }
 
-  return true;
+  return URI_PARSE_OK;
 }
