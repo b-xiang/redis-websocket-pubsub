@@ -1,0 +1,4 @@
+.*.sw[opq]
+*.o
+test-pubsub
+/libevent-2.0.22-stable*
