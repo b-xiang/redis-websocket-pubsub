@@ -6,6 +6,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -207,7 +208,8 @@ uri_parse_scheme(struct uri *const uri, struct lexer *const lex) {
   const size_t nbytes = end - start;
   uri->scheme = malloc(nbytes + 1);
   if (uri->scheme == NULL) {
-    return false;
+    perror("malloc failed");
+    exit(1);  // TODO do something better.
   }
   memcpy((void *)uri->scheme, start, nbytes);
   uri->scheme[nbytes] = '\0';
@@ -245,7 +247,8 @@ uri_parse_userinfo(struct uri *const uri, struct lexer *const lex) {
   if (nbytes != 0) {
     uri->userinfo = malloc(nbytes + 1);
     if (uri->userinfo == NULL) {
-      return false;
+      perror("malloc failed");
+      exit(1);  // TODO do something better.
     }
     memcpy((void *)uri->userinfo, start, nbytes);
     uri->userinfo[nbytes] = '\0';
@@ -568,6 +571,284 @@ fail:
 }
 
 
+/**
+ * path_segments = segment *( "/" segment )
+ * segment       = *pchar *( ";" param )
+ * param         = *pchar
+ * pchar         = unreserved | escaped | ":" | "@" | "&" | "=" | "+" | "$" | ","
+ **/
+static void
+uri_parse_path_segments(struct lexer *const lex) {
+  for (unsigned int i = 0; ; ++i) {
+    if (lexer_nremaining(lex) == 0) {
+      break;
+    }
+
+    // "/"
+    if (i != 0) {
+      if (lexer_peek(lex) != '/') {
+        break;
+      }
+      lexer_consume(lex, 1);
+    }
+
+    // segment
+    while (true) {
+      const char c = lexer_peek(lex);
+      if (HAS_CTYPE(c, CTYPE_PCHAR)) {
+        lexer_consume(lex, 1);
+      }
+      else if (HAS_ESCAPED(lex)) {
+        lexer_consume(lex, 3);
+      }
+      else {
+        break;
+      }
+    }
+    while (true) {
+      if (lexer_nremaining(lex) == 0 || lexer_peek(lex) != ';') {
+        break;
+      }
+      while (true) {
+        const char c = lexer_peek(lex);
+        if (HAS_CTYPE(c, CTYPE_PCHAR)) {
+          lexer_consume(lex, 1);
+        }
+        else if (HAS_ESCAPED(lex)) {
+          lexer_consume(lex, 3);
+        }
+        else {
+          break;
+        }
+      }
+    }
+  }
+}
+
+
+/**
+ * abs_path = "/" path_segments
+ **/
+bool
+uri_parse_abs_path(struct uri *const uri, struct lexer *const lex) {
+  if (uri == NULL || lex == NULL) {
+    return false;
+  }
+
+  const char *const start = lexer_upto(lex);
+
+  // "/"
+  if (lexer_nremaining(lex) == 0 || lexer_peek(lex) != '/') {
+    return false;
+  }
+  lexer_consume(lex, 1);
+
+  // path_segments
+  uri_parse_path_segments(lex);
+
+  const char *const end = lexer_upto(lex);
+  const size_t nbytes = end - start;
+  uri->path = malloc(nbytes + 1);
+  if (uri->path == NULL) {
+    perror("malloc failed");
+    exit(1);  // TODO do something better.
+  }
+  memcpy(uri->path, start, nbytes);
+  uri->path[nbytes] = '\0';
+
+  return true;
+}
+
+
+/**
+ * rel_path = rel_segment [ abs_path ]
+ **/
+static bool
+uri_parse_rel_path(struct uri *const uri, struct lexer *const lex) {
+  const char *const start = lexer_upto(lex);
+
+  // rel_segment
+  if (!uri_parse_rel_segment(lex)) {
+    return false;
+  }
+
+  // [ abs_path ]
+  uri_parse_abs_path(uri, lex);
+
+  const char *const end = lexer_upto(lex);
+  const size_t nbytes = end - start;
+
+  free(uri->path);
+  uri->path = malloc(nbytes + 1);
+  if (uri->path == NULL) {
+    perror("malloc failed");
+    exit(1);  // TODO do something better.
+  }
+  memcpy(uri->path, start, nbytes);
+  uri->path[nbytes] = '\0';
+
+  return true;
+}
+
+
+/**
+ * net_path  = "//" authority [ abs_path ]
+ **/
+static bool
+uri_parse_net_path(struct uri *const uri, struct lexer *const lex) {
+  // "//"
+  if (lexer_nremaining(lex) < 2 || lexer_strcmp(lex, "//") != 0) {
+    return false;
+  }
+
+  // authority
+  if (!uri_parse_authority(uri, lex)) {
+    return false;
+  }
+
+  // [ abs_path ]
+  uri_parse_abs_path(uri, lex);
+
+  return true;
+}
+
+/**
+ * fragment = *uric
+ * uric     = reserved | unreserved | escaped
+ **/
+static void
+uri_parse_fragment(struct uri *const uri, struct lexer *const lex) {
+  const char *const start = lexer_upto(lex);
+
+  // fragment
+  while (true) {
+    if (lexer_nremaining(lex) == 0) {
+      break;
+    }
+    else if (HAS_CTYPE(lexer_peek(lex), CTYPE_URIC)) {
+      lexer_consume(lex, 1);
+    }
+    else if (HAS_ESCAPED(lex)) {
+      lexer_consume(lex, 3);
+    }
+    else {
+      break;
+    }
+  }
+
+  const char *const end = lexer_upto(lex);
+  const size_t nbytes = end - start;
+  if (nbytes != 0) {
+    uri->fragment = malloc(nbytes + 1);
+    if (uri->fragment == NULL) {
+      perror("malloc failed");
+      exit(1);  // TODO Do something better.
+    }
+    memcpy(uri->fragment, start, nbytes);
+    uri->fragment[nbytes] = '\0';
+  }
+}
+
+
+/**
+ * query = *uric
+ * uric  = reserved | unreserved | escaped
+ **/
+static void
+uri_parse_query(struct uri *const uri, struct lexer *const lex) {
+  const char *const start = lexer_upto(lex);
+
+  // query
+  while (true) {
+    if (lexer_nremaining(lex) == 0) {
+      break;
+    }
+    else if (HAS_CTYPE(lexer_peek(lex), CTYPE_URIC)) {
+      lexer_consume(lex, 1);
+    }
+    else if (HAS_ESCAPED(lex)) {
+      lexer_consume(lex, 3);
+    }
+    else {
+      break;
+    }
+  }
+
+  const char *const end = lexer_upto(lex);
+  const size_t nbytes = end - start;
+  if (nbytes != 0) {
+    uri->query = malloc(nbytes + 1);
+    if (uri->query == NULL) {
+      perror("malloc failed");
+      exit(1);  // TODO Do something better.
+    }
+    memcpy(uri->query, start, nbytes);
+    uri->query[nbytes] = '\0';
+  }
+}
+
+
+/**
+ * hier_part = ( net_path | abs_path ) [ "?" query ]
+ **/
+static bool
+uri_parse_hier_part(struct uri *const uri, struct lexer *const lex) {
+  // net_path | abs_path | rel_path
+  if (!uri_parse_net_path(uri, lex) || !uri_parse_abs_path(uri, lex)) {
+    return false;
+  }
+
+  // [ "?" query ]
+  if (lexer_nremaining(lex) != 0 && lexer_peek(lex) == '?') {
+    lexer_consume(lex, 1);
+    uri_parse_query(uri, lex);
+  }
+
+  return true;
+}
+
+
+/**
+ * opaque_part   = uric_no_slash *uric
+ * uric_no_slash = unreserved | escaped | ";" | "?" | ":" | "@" | "&" | "=" | "+" | "$" | ","
+ * uric          = reserved | unreserved | escaped
+ **/
+static bool
+uri_parse_opaque_part(struct lexer *const lex) {
+  // uric_no_slash
+  if (lexer_nremaining(lex) == 0) {
+    return false;
+  }
+  else if (HAS_CTYPE(lexer_peek(lex), CTYPE_URIC_NO_SLASH)) {
+    lexer_consume(lex, 1);
+  }
+  else if (HAS_ESCAPED(lex)) {
+    lexer_consume(lex, 3);
+  }
+  else {
+    return false;
+  }
+
+  // *uric
+  while (true) {
+    if (lexer_nremaining(lex) == 0) {
+      break;
+    }
+    else if (HAS_CTYPE(lexer_peek(lex), CTYPE_URIC)) {
+      lexer_consume(lex, 1);
+    }
+    else if (HAS_ESCAPED(lex)) {
+      lexer_consume(lex, 3);
+    }
+    else {
+      break;
+    }
+  }
+
+  return true;
+}
+
+
 // ================================================================================================
 // Public API for `uri`.
 // ================================================================================================
@@ -610,7 +891,12 @@ uri_parse(struct uri *const uri, struct lexer *const lex) {
   if (!uri_parse_absolute_uri(uri, lex) && !uri_parse_relative_uri(uri, lex)) {
     return false;
   }
-  // TODO parse [ "#" fragment ]
+
+  // [ "#" fragment ]
+  if (lexer_nremaining(lex) != 0 && lexer_peek(lex) == '#') {
+    lexer_consume(lex, 1);
+    uri_parse_fragment(uri, lex);
+  }
 
   return true;
 }
@@ -634,12 +920,15 @@ uri_parse_absolute_uri(struct uri *const uri, struct lexer *const lex) {
   }
 
   // ":"
-  if (lexer_nremaining(lex) < 1 || lexer_peek(lex) != ':') {
+  if (lexer_nremaining(lex) == 0 || lexer_peek(lex) != ':') {
     goto fail;
   }
   lexer_consume(lex, 1);
 
-  // TODO ( hier_part | opaque_part )
+  // hier_part | opaque_part
+  if (!uri_parse_hier_part(uri, lex) || !uri_parse_opaque_part(lex)) {
+    goto fail;
+  }
 
   return true;
 
@@ -649,13 +938,25 @@ fail:
 }
 
 
+/**
+ * relativeURI = ( net_path | abs_path | rel_path ) [ "?" query ]
+ **/
 bool
 uri_parse_relative_uri(struct uri *const uri, struct lexer *const lex) {
   if (uri == NULL || lex == NULL) {
     return false;
   }
 
-  // TODO
+  // net_path | abs_path | rel_path
+  if (!uri_parse_net_path(uri, lex) || !uri_parse_abs_path(uri, lex) || !uri_parse_rel_path(uri, lex)) {
+    return false;
+  }
+
+  // [ "?" query ]
+  if (lexer_nremaining(lex) != 0 && lexer_peek(lex) == '?') {
+    lexer_consume(lex, 1);
+    uri_parse_query(uri, lex);
+  }
 
   return true;
 }
