@@ -902,6 +902,21 @@ uri_destroy(struct uri *const uri) {
   return URI_PARSE_OK;
 }
 
+
+void
+uri_pprint(FILE *const file, const struct uri *const uri) {
+  if (file == NULL) {
+    return;
+  }
+  if (uri == NULL) {
+    fprintf(file, "[(null)]");
+  }
+  else {
+    fprintf(file, "[scheme=%s netloc=%s path=%s params=%s query=%s fragment=%s userinfo=%s port=%u]", uri->scheme, uri->netloc, uri->path, uri->params, uri->query, uri->fragment, uri->userinfo, uri->port);
+  }
+}
+
+
 /**
  * URI-reference = [ absoluteURI | relativeURI ] [ "#" fragment ]
  **/

@@ -11,6 +11,314 @@
 
 #include "lexer.h"
 
+/*
+https://tools.ietf.org/html/rfc2616#section-2.2
+
+OCTET          = <any 8-bit sequence of data>
+CHAR           = <any US-ASCII character (octets 0 - 127)>
+UPALPHA        = <any US-ASCII uppercase letter "A".."Z">
+LOALPHA        = <any US-ASCII lowercase letter "a".."z">
+ALPHA          = UPALPHA | LOALPHA
+DIGIT          = <any US-ASCII digit "0".."9">
+CTL            = <any US-ASCII control character (octets 0 - 31) and DEL (127)>
+CR             = <US-ASCII CR, carriage return (13)>
+LF             = <US-ASCII LF, linefeed (10)>
+SP             = <US-ASCII SP, space (32)>
+HT             = <US-ASCII HT, horizontal-tab (9)>
+<">            = <US-ASCII double-quote mark (34)>
+
+CRLF           = CR LF
+
+LWS            = [CRLF] 1*( SP | HT )
+
+TEXT           = <any OCTET except CTLs, but including LWS>
+
+token          = 1*<any CHAR except CTLs or separators>
+separators     = "(" | ")" | "<" | ">" | "@" | "," | ";" | ":" | "\" | <"> | "/" | "[" | "]" | "?" | "=" | "{" | "}" | SP | HT
+
+comment        = "(" *( ctext | quoted-pair | comment ) ")"
+ctext          = <any TEXT excluding "(" and ")">
+
+quoted-string  = ( <"> *(qdtext | quoted-pair ) <"> )
+qdtext         = <any TEXT except <">>
+
+quoted-pair    = "\" CHAR
+
+message-header = field-name ":" [ field-value ]
+field-name     = token
+field-value    = *( field-content | LWS )
+field-content  = <the OCTETs making up the field-value and consisting of either *TEXT or combinations of token, separators, and quoted-string>
+
+generic-message = start-line *(message-header CRLF) CRLF [ message-body ]
+*/
+
+static const uint8_t CTYPE_TEXT      = 1 << 0;
+static const uint8_t CTYPE_CHAR      = 1 << 1;
+static const uint8_t CTYPE_CTL       = 1 << 2;
+static const uint8_t CTYPE_SEPARATOR = 1 << 3;
+static const uint8_t CTYPE_TOKEN     = 1 << 4;
+
+static const uint8_t CTYPES[256] = {
+  CTYPE_CTL | CTYPE_CHAR,  // 0x00
+  CTYPE_CTL | CTYPE_CHAR,  // 0x01
+  CTYPE_CTL | CTYPE_CHAR,  // 0x02
+  CTYPE_CTL | CTYPE_CHAR,  // 0x03
+  CTYPE_CTL | CTYPE_CHAR,  // 0x04
+  CTYPE_CTL | CTYPE_CHAR,  // 0x05
+  CTYPE_CTL | CTYPE_CHAR,  // 0x06
+  CTYPE_CTL | CTYPE_CHAR,  // 0x07
+  CTYPE_CTL | CTYPE_CHAR,  // 0x08
+  CTYPE_CTL | CTYPE_CHAR | CTYPE_TEXT | CTYPE_SEPARATOR,  // 0x09
+  CTYPE_CTL | CTYPE_CHAR,  // 0x0a
+  CTYPE_CTL | CTYPE_CHAR,  // 0x0b
+  CTYPE_CTL | CTYPE_CHAR,  // 0x0c
+  CTYPE_CTL | CTYPE_CHAR,  // 0x0d
+  CTYPE_CTL | CTYPE_CHAR,  // 0x0e
+  CTYPE_CTL | CTYPE_CHAR,  // 0x0f
+  CTYPE_CTL | CTYPE_CHAR,  // 0x10
+  CTYPE_CTL | CTYPE_CHAR,  // 0x11
+  CTYPE_CTL | CTYPE_CHAR,  // 0x12
+  CTYPE_CTL | CTYPE_CHAR,  // 0x13
+  CTYPE_CTL | CTYPE_CHAR,  // 0x14
+  CTYPE_CTL | CTYPE_CHAR,  // 0x15
+  CTYPE_CTL | CTYPE_CHAR,  // 0x16
+  CTYPE_CTL | CTYPE_CHAR,  // 0x17
+  CTYPE_CTL | CTYPE_CHAR,  // 0x18
+  CTYPE_CTL | CTYPE_CHAR,  // 0x19
+  CTYPE_CTL | CTYPE_CHAR,  // 0x1a
+  CTYPE_CTL | CTYPE_CHAR,  // 0x1b
+  CTYPE_CTL | CTYPE_CHAR,  // 0x1c
+  CTYPE_CTL | CTYPE_CHAR,  // 0x1d
+  CTYPE_CTL | CTYPE_CHAR,  // 0x1e
+  CTYPE_CTL | CTYPE_CHAR,  // 0x1f
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_SEPARATOR,  // " "
+  CTYPE_TEXT | CTYPE_CHAR,  // "!"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_SEPARATOR,  // """
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "#"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "$"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "%"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "&"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "'"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_SEPARATOR,  // "("
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_SEPARATOR,  // ")"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "*"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "+"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_SEPARATOR,  // ","
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "-"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "."
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_SEPARATOR,  // "/"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "0"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "1"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "2"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "3"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "4"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "5"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "6"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "7"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "8"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "9"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_SEPARATOR,  // ":"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_SEPARATOR,  // ";"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_SEPARATOR,  // "<"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_SEPARATOR,  // "="
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_SEPARATOR,  // ">"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_SEPARATOR,  // "?"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_SEPARATOR,  // "@"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "A"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "B"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "C"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "D"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "E"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "F"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "G"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "H"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "I"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "J"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "K"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "L"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "M"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "N"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "O"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "P"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "Q"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "R"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "S"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "T"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "U"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "V"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "W"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "X"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "Y"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "Z"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_SEPARATOR,  // "["
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_SEPARATOR,  // "\"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_SEPARATOR,  // "]"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "^"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "_"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "`"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "a"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "b"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "c"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "d"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "e"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "f"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "g"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "h"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "i"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "j"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "k"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "l"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "m"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "n"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "o"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "p"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "q"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "r"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "s"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "t"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "u"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "v"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "w"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "x"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "y"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "z"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_SEPARATOR,  // "{"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "|"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_SEPARATOR,  // "}"
+  CTYPE_TEXT | CTYPE_CHAR | CTYPE_TOKEN,  // "~"
+  CTYPE_CTL | CTYPE_CHAR,  // 0x7f
+  CTYPE_TEXT,  // 0x80
+  CTYPE_TEXT,  // 0x81
+  CTYPE_TEXT,  // 0x82
+  CTYPE_TEXT,  // 0x83
+  CTYPE_TEXT,  // 0x84
+  CTYPE_TEXT,  // 0x85
+  CTYPE_TEXT,  // 0x86
+  CTYPE_TEXT,  // 0x87
+  CTYPE_TEXT,  // 0x88
+  CTYPE_TEXT,  // 0x89
+  CTYPE_TEXT,  // 0x8a
+  CTYPE_TEXT,  // 0x8b
+  CTYPE_TEXT,  // 0x8c
+  CTYPE_TEXT,  // 0x8d
+  CTYPE_TEXT,  // 0x8e
+  CTYPE_TEXT,  // 0x8f
+  CTYPE_TEXT,  // 0x90
+  CTYPE_TEXT,  // 0x91
+  CTYPE_TEXT,  // 0x92
+  CTYPE_TEXT,  // 0x93
+  CTYPE_TEXT,  // 0x94
+  CTYPE_TEXT,  // 0x95
+  CTYPE_TEXT,  // 0x96
+  CTYPE_TEXT,  // 0x97
+  CTYPE_TEXT,  // 0x98
+  CTYPE_TEXT,  // 0x99
+  CTYPE_TEXT,  // 0x9a
+  CTYPE_TEXT,  // 0x9b
+  CTYPE_TEXT,  // 0x9c
+  CTYPE_TEXT,  // 0x9d
+  CTYPE_TEXT,  // 0x9e
+  CTYPE_TEXT,  // 0x9f
+  CTYPE_TEXT,  // 0xa0
+  CTYPE_TEXT,  // 0xa1
+  CTYPE_TEXT,  // 0xa2
+  CTYPE_TEXT,  // 0xa3
+  CTYPE_TEXT,  // 0xa4
+  CTYPE_TEXT,  // 0xa5
+  CTYPE_TEXT,  // 0xa6
+  CTYPE_TEXT,  // 0xa7
+  CTYPE_TEXT,  // 0xa8
+  CTYPE_TEXT,  // 0xa9
+  CTYPE_TEXT,  // 0xaa
+  CTYPE_TEXT,  // 0xab
+  CTYPE_TEXT,  // 0xac
+  CTYPE_TEXT,  // 0xad
+  CTYPE_TEXT,  // 0xae
+  CTYPE_TEXT,  // 0xaf
+  CTYPE_TEXT,  // 0xb0
+  CTYPE_TEXT,  // 0xb1
+  CTYPE_TEXT,  // 0xb2
+  CTYPE_TEXT,  // 0xb3
+  CTYPE_TEXT,  // 0xb4
+  CTYPE_TEXT,  // 0xb5
+  CTYPE_TEXT,  // 0xb6
+  CTYPE_TEXT,  // 0xb7
+  CTYPE_TEXT,  // 0xb8
+  CTYPE_TEXT,  // 0xb9
+  CTYPE_TEXT,  // 0xba
+  CTYPE_TEXT,  // 0xbb
+  CTYPE_TEXT,  // 0xbc
+  CTYPE_TEXT,  // 0xbd
+  CTYPE_TEXT,  // 0xbe
+  CTYPE_TEXT,  // 0xbf
+  CTYPE_TEXT,  // 0xc0
+  CTYPE_TEXT,  // 0xc1
+  CTYPE_TEXT,  // 0xc2
+  CTYPE_TEXT,  // 0xc3
+  CTYPE_TEXT,  // 0xc4
+  CTYPE_TEXT,  // 0xc5
+  CTYPE_TEXT,  // 0xc6
+  CTYPE_TEXT,  // 0xc7
+  CTYPE_TEXT,  // 0xc8
+  CTYPE_TEXT,  // 0xc9
+  CTYPE_TEXT,  // 0xca
+  CTYPE_TEXT,  // 0xcb
+  CTYPE_TEXT,  // 0xcc
+  CTYPE_TEXT,  // 0xcd
+  CTYPE_TEXT,  // 0xce
+  CTYPE_TEXT,  // 0xcf
+  CTYPE_TEXT,  // 0xd0
+  CTYPE_TEXT,  // 0xd1
+  CTYPE_TEXT,  // 0xd2
+  CTYPE_TEXT,  // 0xd3
+  CTYPE_TEXT,  // 0xd4
+  CTYPE_TEXT,  // 0xd5
+  CTYPE_TEXT,  // 0xd6
+  CTYPE_TEXT,  // 0xd7
+  CTYPE_TEXT,  // 0xd8
+  CTYPE_TEXT,  // 0xd9
+  CTYPE_TEXT,  // 0xda
+  CTYPE_TEXT,  // 0xdb
+  CTYPE_TEXT,  // 0xdc
+  CTYPE_TEXT,  // 0xdd
+  CTYPE_TEXT,  // 0xde
+  CTYPE_TEXT,  // 0xdf
+  CTYPE_TEXT,  // 0xe0
+  CTYPE_TEXT,  // 0xe1
+  CTYPE_TEXT,  // 0xe2
+  CTYPE_TEXT,  // 0xe3
+  CTYPE_TEXT,  // 0xe4
+  CTYPE_TEXT,  // 0xe5
+  CTYPE_TEXT,  // 0xe6
+  CTYPE_TEXT,  // 0xe7
+  CTYPE_TEXT,  // 0xe8
+  CTYPE_TEXT,  // 0xe9
+  CTYPE_TEXT,  // 0xea
+  CTYPE_TEXT,  // 0xeb
+  CTYPE_TEXT,  // 0xec
+  CTYPE_TEXT,  // 0xed
+  CTYPE_TEXT,  // 0xee
+  CTYPE_TEXT,  // 0xef
+  CTYPE_TEXT,  // 0xf0
+  CTYPE_TEXT,  // 0xf1
+  CTYPE_TEXT,  // 0xf2
+  CTYPE_TEXT,  // 0xf3
+  CTYPE_TEXT,  // 0xf4
+  CTYPE_TEXT,  // 0xf5
+  CTYPE_TEXT,  // 0xf6
+  CTYPE_TEXT,  // 0xf7
+  CTYPE_TEXT,  // 0xf8
+  CTYPE_TEXT,  // 0xf9
+  CTYPE_TEXT,  // 0xfa
+  CTYPE_TEXT,  // 0xfb
+  CTYPE_TEXT,  // 0xfc
+  CTYPE_TEXT,  // 0xfd
+  CTYPE_TEXT,  // 0xfe
+  CTYPE_TEXT,  // 0xff
+};
+
+#define HAS_CTYPE(c, mask) ((CTYPES[c & 0xff] & mask) != 0)
+
 const char *const HTTP_METHOD_CONNECT = "CONNECT";
 const char *const HTTP_METHOD_DELETE = "DELETE";
 const char *const HTTP_METHOD_GET = "GET";
@@ -19,6 +327,8 @@ const char *const HTTP_METHOD_OPTIONS = "OPTIONS";
 const char *const HTTP_METHOD_POST = "POST";
 const char *const HTTP_METHOD_PUT = "PUT";
 const char *const HTTP_METHOD_TRACE = "TRACE";
+
+const char *const HTTP_REQUEST_URI_ASTERISK = "*";
 
 
 /**
@@ -142,40 +452,24 @@ parse_http_request_uri(struct http_request *const req, struct lexer *const lex) 
   }
 
   if (lexer_peek(lex) == '*') {
-    req->uri = malloc(2);
-    if (req->uri == NULL) {
-      return HTTP_REQUEST_PARSE_ENOMEM;
-    }
-    req->uri[0] = '*';
-    req->uri[1] = '\0';
+    req->uri_asterisk = HTTP_REQUEST_URI_ASTERISK;
     return HTTP_REQUEST_PARSE_OK;
   }
 
-  struct uri uri;
-  enum uri_parse_status status = uri_init(&uri);
-  if (status == URI_PARSE_ENOMEM) {
-    return HTTP_REQUEST_PARSE_ENOMEM;
-  }
-
-  status = uri_parse_absolute_uri(&uri, lex);
+  enum uri_parse_status status = uri_parse_absolute_uri(&req->uri, lex);
   if (status == URI_PARSE_ENOMEM) {
     return HTTP_REQUEST_PARSE_ENOMEM;
   }
   else if (status == URI_PARSE_BAD) {
-    status = uri_parse_abs_path(&uri, lex);
+    status = uri_parse_abs_path(&req->uri, lex);
   }
-
   if (status == URI_PARSE_ENOMEM) {
     return HTTP_REQUEST_PARSE_ENOMEM;
   }
   else if (status == URI_PARSE_BAD) {
-    uri_parse_authority(&uri, lex);
+    uri_parse_authority(&req->uri, lex);
   }
-
   if (status == URI_PARSE_ENOMEM) {
-    return HTTP_REQUEST_PARSE_ENOMEM;
-  }
-  if (uri_destroy(&uri) == URI_PARSE_ENOMEM) {
     return HTTP_REQUEST_PARSE_ENOMEM;
   }
 
@@ -241,12 +535,85 @@ fail:
  *            | entity-header ) CRLF)  ; Section 7.1
  *           CRLF
  *           [ message-body ]          ; Section 4.3
+ *
+ * message-header = field-name ":" [ field-value ]
+ * field-name     = token
+ * field-value    = *( field-content | LWS )
+ * field-content  = <the OCTETs making up the field-value and consisting of either *TEXT or combinations of token, separators, and quoted-string>
+ *
+ * generic-message = start-line *(message-header CRLF) CRLF [ message-body ]
  **/
 static enum http_request_parse_status
 parse_http_request(struct http_request *const req, struct lexer *const lex) {
+  // Request-Line
   enum http_request_parse_status status = parse_http_line_request(req, lex);
   if (status != HTTP_REQUEST_PARSE_OK) {
     return status;
+  }
+
+  fprintf(stdout, "request uri=");
+  uri_pprint(stdout, &req->uri);
+  fprintf(stdout, "\n");
+
+  // *(message-header CRLF)
+  while (1) {
+    if (lexer_nremaining(lex) == 0) {
+      break;
+    }
+
+    // field-name
+    const char *name_start = lexer_upto(lex);
+    while (1) {
+      if (lexer_nremaining(lex) == 0) {
+        return HTTP_REQUEST_PARSE_BAD;
+      }
+      else if (!HAS_CTYPE(lexer_peek(lex), CTYPE_TOKEN)) {
+        break;
+      }
+      lexer_consume(lex, 1);
+    }
+    const char *name_end = lexer_upto(lex);
+    const size_t name_nbytes = name_end - name_start;
+
+    // ":"
+    if (lexer_nremaining(lex) == 0 || lexer_peek(lex) != ':') {
+      return HTTP_REQUEST_PARSE_BAD;
+    }
+    lexer_consume(lex, 1);
+
+    fprintf(stdout, "read header '");
+    fwrite(name_start, 1, name_nbytes, stdout);
+    fprintf(stdout, "'\n");
+
+    // LWS
+    if (!lexer_consume_lws(lex)) {
+      return HTTP_REQUEST_PARSE_BAD;
+    }
+
+    // field-value
+    const char *value_start = lexer_upto(lex);
+    while (1) {
+      if (lexer_nremaining(lex) == 0) {
+        return HTTP_REQUEST_PARSE_BAD;
+      }
+      else if (!HAS_CTYPE(lexer_peek(lex), CTYPE_TEXT)) {
+        break;
+      }
+      lexer_consume(lex, 1);
+    }
+    const char *value_end = lexer_upto(lex);
+    const size_t value_nbytes = value_end - value_start;
+    (void)value_nbytes;
+
+    fprintf(stdout, "read value '");
+    fwrite(value_start, 1, value_nbytes, stdout);
+    fprintf(stdout, "'\n");
+
+    // CRLF
+    if (lexer_nremaining(lex) < 2 || lexer_memcmp(lex, "\r\n", 2) != 0) {
+      return HTTP_REQUEST_PARSE_BAD;
+    }
+    lexer_consume(lex, 2);
   }
 
   // TODO
@@ -265,6 +632,14 @@ http_request_init(struct http_request *const req) {
   }
 
   memset(req, 0, sizeof(struct http_request));
+  enum uri_parse_status status = uri_init(&req->uri);
+  if (status == URI_PARSE_ENOMEM) {
+    return HTTP_REQUEST_PARSE_ENOMEM;
+  }
+  else if (status == URI_PARSE_BAD) {
+    return HTTP_REQUEST_PARSE_BAD;
+  }
+
   return HTTP_REQUEST_PARSE_OK;
 }
 
@@ -275,7 +650,14 @@ http_request_destroy(struct http_request *const req) {
     return HTTP_REQUEST_PARSE_BAD;
   }
 
-  free(req->uri);
+  enum uri_parse_status status = uri_destroy(&req->uri);
+  if (status == URI_PARSE_ENOMEM) {
+    return HTTP_REQUEST_PARSE_ENOMEM;
+  }
+  else if (status == URI_PARSE_BAD) {
+    return HTTP_REQUEST_PARSE_BAD;
+  }
+
   return HTTP_REQUEST_PARSE_OK;
 }
 

@@ -6,6 +6,7 @@
 #define URI_H_
 
 #include <stdint.h>
+#include <stdio.h>
 
 // Forwards declaration from lexer.h.
 struct lexer;
@@ -32,6 +33,8 @@ struct uri {
 
 enum uri_parse_status uri_init(struct uri *uri);
 enum uri_parse_status uri_destroy(struct uri *uri);
+void uri_pprint(FILE *file, const struct uri *uri);
+
 enum uri_parse_status uri_parse(struct uri *uri, struct lexer *lex);
 enum uri_parse_status uri_parse_abs_path(struct uri *uri, struct lexer *lex);
 enum uri_parse_status uri_parse_absolute_uri(struct uri *uri, struct lexer *lex);

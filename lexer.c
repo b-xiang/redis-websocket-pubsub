@@ -3,6 +3,7 @@
 #include <ctype.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 
@@ -39,7 +40,7 @@ lexer_consume_lws(struct lexer *const lex) {
   memcpy(&orig, lex, sizeof(struct lexer));
 
   // Try to consume the rule.
-  if (lexer_nremaining(lex) >= 2 && lexer_memcmp(lex, "\r\n", 2)) {
+  if (lexer_nremaining(lex) >= 2 && lexer_memcmp(lex, "\r\n", 2) == 0) {
     lexer_consume(lex, 2);
     changed = true;
   }

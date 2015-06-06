@@ -39,7 +39,9 @@ struct http_request {
   uint32_t version_major;
   uint32_t version_minor;
   const char *method;
-  char *uri;
+  struct uri uri;
+  const char *uri_asterisk;
+  const char *host;
   struct http_headers headers;
 };
 
