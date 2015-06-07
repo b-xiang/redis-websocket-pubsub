@@ -28,15 +28,21 @@ static const struct test_case TESTS[] = {
 int
 main(void) {
   struct base64_buffer buffer;
+  enum base64_status status;
 
-  base64_init(&buffer);
+  status = base64_init(&buffer);
+  if (status != BASE64_STATUS_OK) {
+    perror("base64_init failed");
+    return 1;
+  }
+
   static const size_t ntests = sizeof(TESTS)/sizeof(struct test_case);
   for (size_t i = 0; i != ntests; ++i) {
-    fprintf(stdout, "Test %zu/%zu) ", i + 1, ntests);
+    fprintf(stdout, "Test %zu/%zu) encode: ", i + 1, ntests);
 
-    base64_encode(TESTS[i].input, strlen(TESTS[i].input), &buffer);
-    if (buffer.data == NULL) {
-      fprintf(stdout, "error! buffer->data is NULL");
+    status = base64_encode(TESTS[i].input, strlen(TESTS[i].input), &buffer);
+    if (status != BASE64_STATUS_OK) {
+      fprintf(stdout, "error! base64_encode failed");
     }
     else if (buffer.used != strlen(TESTS[i].output)) {
       fprintf(stdout, "failed! actual length %zu != expected length %zu\n", buffer.used, strlen(TESTS[i].output));
@@ -52,9 +58,34 @@ main(void) {
       fprintf(stdout, "passed!");
     }
 
+    fprintf(stdout, " decode: ");
+
+    status = base64_decode(TESTS[i].output, strlen(TESTS[i].output), &buffer);
+    if (status != BASE64_STATUS_OK) {
+      fprintf(stdout, "error! base64_decode failed");
+    }
+    else if (buffer.used != strlen(TESTS[i].input)) {
+      fprintf(stdout, "failed! actual length %zu != expected length %zu\n", buffer.used, strlen(TESTS[i].input));
+    }
+    else if (memcmp(buffer.data, TESTS[i].input, buffer.used) != 0) {
+      fprintf(stdout, "failed! actual '");
+      fwrite(buffer.data, 1, buffer.used, stdout);
+      fprintf(stdout, "' != expected '");
+      fwrite(TESTS[i].input, 1, strlen(TESTS[i].input), stdout);
+      fprintf(stdout, "'");
+    }
+    else {
+      fprintf(stdout, "passed!");
+    }
+
     fprintf(stdout, "\n");
   }
-  base64_destroy(&buffer);
+
+  status = base64_destroy(&buffer);
+  if (status != BASE64_STATUS_OK) {
+    perror("base64_destroy failed");
+    return 1;
+  }
 
   return 0;
 }
