@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "lexer.h"
+#include "websocket.h"
 
 /*
 https://tools.ietf.org/html/rfc2616#section-2.2
@@ -335,7 +336,7 @@ const char *const HTTP_REQUEST_URI_ASTERISK = "*";
 /**
  * HTTP-Version = "HTTP" "/" 1*DIGIT "." 1*DIGIT
  **/
-static enum http_request_parse_status
+static enum status
 parse_http_version(struct lexer *const lex) {
   uint32_t version_major, version_minor;
 
@@ -370,10 +371,10 @@ parse_http_version(struct lexer *const lex) {
     goto fail;
   }
 
-  return HTTP_REQUEST_PARSE_OK;
+  return STATUS_OK;
 
 fail:
-  return HTTP_REQUEST_PARSE_BAD;
+  return STATUS_BAD;
 }
 
 
@@ -389,98 +390,88 @@ fail:
  *                | extension-method
  * extension-method = token
  **/
-static enum http_request_parse_status
+static enum status
 parse_http_method(struct http_request *const req, struct lexer *const lex) {
   const size_t remaining = lexer_nremaining(lex);
   if (remaining >= 3) {
     if (lexer_memcmp(lex, "GET", 3) == 0) {
       req->method = HTTP_METHOD_GET;
       lexer_consume(lex, 3);
-      return HTTP_REQUEST_PARSE_OK;
+      return STATUS_OK;
     }
     else if (lexer_memcmp(lex, "PUT", 3) == 0) {
       req->method = HTTP_METHOD_PUT;
       lexer_consume(lex, 3);
-      return HTTP_REQUEST_PARSE_OK;
+      return STATUS_OK;
     }
   }
   if (remaining >= 4) {
     if (lexer_memcmp(lex, "HEAD", 4) == 0) {
       req->method = HTTP_METHOD_HEAD;
       lexer_consume(lex, 4);
-      return HTTP_REQUEST_PARSE_OK;
+      return STATUS_OK;
     }
     else if (lexer_memcmp(lex, "POST", 4) == 0) {
       req->method = HTTP_METHOD_POST;
       lexer_consume(lex, 4);
-      return HTTP_REQUEST_PARSE_OK;
+      return STATUS_OK;
     }
   }
   if (remaining >= 5 && lexer_memcmp(lex, "TRACE", 5) == 0) {
     req->method = HTTP_METHOD_TRACE;
     lexer_consume(lex, 5);
-    return HTTP_REQUEST_PARSE_OK;
+    return STATUS_OK;
   }
   if (remaining >= 6 && lexer_memcmp(lex, "DELETE", 5) == 0) {
     req->method = HTTP_METHOD_DELETE;
     lexer_consume(lex, 6);
-    return HTTP_REQUEST_PARSE_OK;
+    return STATUS_OK;
   }
   if (remaining >= 7) {
     if (lexer_memcmp(lex, "CONNECT", 7) == 0) {
       req->method = HTTP_METHOD_CONNECT;
       lexer_consume(lex, 7);
-      return HTTP_REQUEST_PARSE_OK;
+      return STATUS_OK;
     }
     else if (lexer_memcmp(lex, "OPTIONS", 7) == 0) {
       req->method = HTTP_METHOD_OPTIONS;
       lexer_consume(lex, 7);
-      return HTTP_REQUEST_PARSE_OK;
+      return STATUS_OK;
     }
   }
-  return HTTP_REQUEST_PARSE_BAD;
+  return STATUS_BAD;
 }
 
 
 /**
  * Request-URI = "*" | absoluteURI | abs_path | authority
  **/
-static enum http_request_parse_status
+static enum status
 parse_http_request_uri(struct http_request *const req, struct lexer *const lex) {
   if (lexer_nremaining(lex) == 0) {
-    return HTTP_REQUEST_PARSE_BAD;
+    return STATUS_BAD;
   }
 
   if (lexer_peek(lex) == '*') {
     req->uri_asterisk = HTTP_REQUEST_URI_ASTERISK;
-    return HTTP_REQUEST_PARSE_OK;
+    return STATUS_OK;
   }
 
-  enum uri_parse_status status = uri_parse_absolute_uri(&req->uri, lex);
-  if (status == URI_PARSE_ENOMEM) {
-    return HTTP_REQUEST_PARSE_ENOMEM;
-  }
-  else if (status == URI_PARSE_BAD) {
+  enum status status = uri_parse_absolute_uri(&req->uri, lex);
+  if (status == STATUS_BAD) {
     status = uri_parse_abs_path(&req->uri, lex);
+    if (status == STATUS_BAD) {
+      status = uri_parse_authority(&req->uri, lex);
+    }
   }
-  if (status == URI_PARSE_ENOMEM) {
-    return HTTP_REQUEST_PARSE_ENOMEM;
-  }
-  else if (status == URI_PARSE_BAD) {
-    uri_parse_authority(&req->uri, lex);
-  }
-  if (status == URI_PARSE_ENOMEM) {
-    return HTTP_REQUEST_PARSE_ENOMEM;
-  }
-
-  return (status == URI_PARSE_OK) ? HTTP_REQUEST_PARSE_OK : HTTP_REQUEST_PARSE_BAD;
+  return status;
 }
 
 
 /**
  * Request-Line = Method SP Request-URI SP HTTP-Version CRLF
  **/
-static enum http_request_parse_status
+static enum status
 parse_http_line_request(struct http_request *const req, struct lexer *const lex) {
   // Method
   fprintf(stderr, "[parse_http_line_request] before parse_http_method\n");
@@ -521,10 +512,10 @@ parse_http_line_request(struct http_request *const req, struct lexer *const lex)
   }
   lexer_consume(lex, 2);
 
-  return HTTP_REQUEST_PARSE_OK;
+  return STATUS_OK;
 
 fail:
-  return HTTP_REQUEST_PARSE_BAD;
+  return STATUS_BAD;
 }
 
 
@@ -543,25 +534,25 @@ fail:
  *
  * generic-message = start-line *(message-header CRLF) CRLF [ message-body ]
  **/
-static enum http_request_parse_status
+static enum status
 parse_http_request(struct http_request *const req, struct lexer *const lex) {
   // Request-Line
-  enum http_request_parse_status status = parse_http_line_request(req, lex);
-  if (status != HTTP_REQUEST_PARSE_OK) {
+  enum status status = parse_http_line_request(req, lex);
+  if (status != STATUS_OK) {
     return status;
   }
 
   // *(message-header CRLF)
   while (1) {
     if (lexer_nremaining(lex) == 0) {
-      return HTTP_REQUEST_PARSE_BAD;
+      return STATUS_BAD;
     }
 
     // field-name
     const char *name_start = lexer_upto(lex);
     while (1) {
       if (lexer_nremaining(lex) == 0) {
-        return HTTP_REQUEST_PARSE_BAD;
+        return STATUS_BAD;
       }
       else if (!HAS_CTYPE(lexer_peek(lex), CTYPE_TOKEN)) {
         break;
@@ -576,20 +567,20 @@ parse_http_request(struct http_request *const req, struct lexer *const lex) {
 
     // ":"
     if (lexer_nremaining(lex) == 0 || lexer_peek(lex) != ':') {
-      return HTTP_REQUEST_PARSE_BAD;
+      return STATUS_BAD;
     }
     lexer_consume(lex, 1);
 
     // LWS
     if (!lexer_consume_lws(lex)) {
-      return HTTP_REQUEST_PARSE_BAD;
+      return STATUS_BAD;
     }
 
     // field-value
     const char *value_start = lexer_upto(lex);
     while (1) {
       if (lexer_nremaining(lex) == 0) {
-        return HTTP_REQUEST_PARSE_BAD;
+        return STATUS_BAD;
       }
       else if (!HAS_CTYPE(lexer_peek(lex), CTYPE_TEXT)) {
         break;
@@ -601,65 +592,56 @@ parse_http_request(struct http_request *const req, struct lexer *const lex) {
 
     // CRLF
     if (lexer_nremaining(lex) < 2 || lexer_memcmp(lex, "\r\n", 2) != 0) {
-      return HTTP_REQUEST_PARSE_BAD;
+      return STATUS_BAD;
     }
     lexer_consume(lex, 2);
 
     // Add the header to the request object.
     status = http_request_add_header(req, name_start, name_nbytes, value_start, value_nbytes);
-    if (status != HTTP_REQUEST_PARSE_OK) {
+    if (status != STATUS_OK) {
       return status;
     }
   }
 
   // CRLF
   if (lexer_nremaining(lex) < 2 || lexer_memcmp(lex, "\r\n", 2) != 0) {
-    return HTTP_REQUEST_PARSE_BAD;
+    return STATUS_BAD;
   }
   lexer_consume(lex, 2);
 
   // TODO
 
-  return HTTP_REQUEST_PARSE_OK;
+  return STATUS_OK;
 }
 
 
 // ================================================================================================
 // Public API for `http_request`.
 // ================================================================================================
-enum http_request_parse_status
+enum status
 http_request_init(struct http_request *const req) {
   if (req == NULL) {
-    return HTTP_REQUEST_PARSE_BAD;
+    return STATUS_EINVAL;
   }
 
   memset(req, 0, sizeof(struct http_request));
-  enum uri_parse_status status = uri_init(&req->uri);
-  if (status == URI_PARSE_ENOMEM) {
-    return HTTP_REQUEST_PARSE_ENOMEM;
-  }
-  else if (status == URI_PARSE_BAD) {
-    return HTTP_REQUEST_PARSE_BAD;
+  enum status status = uri_init(&req->uri);
+  if (status != STATUS_OK) {
+    return status;
   }
 
-  return HTTP_REQUEST_PARSE_OK;
+  return STATUS_OK;
 }
 
 
-enum http_request_parse_status
+enum status
 http_request_destroy(struct http_request *const req) {
   if (req == NULL) {
-    return HTTP_REQUEST_PARSE_BAD;
+    return STATUS_EINVAL;
   }
 
   // Destroy the URI.
-  enum uri_parse_status status = uri_destroy(&req->uri);
-  if (status == URI_PARSE_ENOMEM) {
-    return HTTP_REQUEST_PARSE_ENOMEM;
-  }
-  else if (status == URI_PARSE_BAD) {
-    return HTTP_REQUEST_PARSE_BAD;
-  }
+  enum status status = uri_destroy(&req->uri);
 
   // Destroy the headers.
   for (struct http_request_header *header = req->header; header != NULL; ) {
@@ -670,21 +652,21 @@ http_request_destroy(struct http_request *const req) {
     header = next;
   }
 
-  return HTTP_REQUEST_PARSE_OK;
+  return status;
 }
 
 
 /**
  * https://tools.ietf.org/html/rfc2616#section-4
  **/
-enum http_request_parse_status
+enum status
 http_request_parse(struct http_request *const req, struct lexer *const lex) {
   if (req == NULL || lex == NULL) {
-    return HTTP_REQUEST_PARSE_BAD;
+    return STATUS_EINVAL;
   }
 
-  enum http_request_parse_status status = parse_http_request(req, lex);
-  if (status != HTTP_REQUEST_PARSE_OK) {
+  enum status status = parse_http_request(req, lex);
+  if (status != STATUS_OK) {
     return status;
   }
 
@@ -695,16 +677,18 @@ http_request_parse(struct http_request *const req, struct lexer *const lex) {
     fprintf(stdout, "request header '%s' => '%s'\n", header->name, header->value);
   }
 
-  return HTTP_REQUEST_PARSE_OK;
+  websocket_write_http_response(req, 1);
+
+  return STATUS_OK;
 }
 
 
-enum http_request_parse_status
+enum status
 http_request_add_header(struct http_request *const req, const char *const name, const size_t name_nbytes, const char *const value, const size_t value_nbytes) {
   char *name_copy = NULL, *value_copy = NULL;
 
   if (req == NULL || name == NULL || value == NULL) {
-    return HTTP_REQUEST_PARSE_BAD;
+    return STATUS_EINVAL;
   }
 
   // Create a local copy of the name, converted to uppercase.
@@ -750,17 +734,17 @@ http_request_add_header(struct http_request *const req, const char *const name, 
     header->value = value_copy;
   }
 
-  return HTTP_REQUEST_PARSE_OK;
+  return STATUS_OK;
 
 fail:
   free(name_copy);
   free(value_copy);
-  return HTTP_REQUEST_PARSE_ENOMEM;
+  return STATUS_ENOMEM;
 }
 
 
 struct http_request_header *
-http_request_find_header(struct http_request *const req, const char *const name_upper) {
+http_request_find_header(const struct http_request *const req, const char *const name_upper) {
   if (req == NULL || name_upper == NULL) {
     return NULL;
   }

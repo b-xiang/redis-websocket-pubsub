@@ -143,33 +143,37 @@ static const uint8_t DECODE_TABLE[128] = {
 static const char ENCODE_TABLE[64] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 
-enum base64_status
+enum status
 base64_init(struct base64_buffer *const buffer) {
   if (buffer == NULL) {
-    return BASE64_STATUS_BAD;
+    return STATUS_EINVAL;
   }
 
   memset(buffer, 0, sizeof(struct base64_buffer));
-  return BASE64_STATUS_OK;
+  return STATUS_OK;
 }
 
 
-enum base64_status
+enum status
 base64_destroy(struct base64_buffer *const buffer) {
   if (buffer == NULL) {
-    return BASE64_STATUS_BAD;
+    return STATUS_EINVAL;
   }
 
   free(buffer->data);
-  return BASE64_STATUS_OK;
+  return STATUS_OK;
 }
 
 
-enum base64_status
+enum status
 base64_decode(const char *const input_start, const size_t input_nbytes, struct base64_buffer *const buffer) {
+  if (input_start == NULL || buffer == NULL) {
+    return STATUS_EINVAL;
+  }
+
   // There must be a multiple of 4 input bytes.
   if (input_nbytes % 4 != 0) {
-    return BASE64_STATUS_BAD;
+    return STATUS_BAD;
   }
 
   // Grow the working buffer if needed.
@@ -180,7 +184,7 @@ base64_decode(const char *const input_start, const size_t input_nbytes, struct b
     if (buffer->data == NULL) {
       buffer->allocd = 0;
       buffer->used = 0;
-      return BASE64_STATUS_ENOMEM;
+      return STATUS_ENOMEM;
     }
 
     buffer->allocd = output_nbytes;
@@ -196,7 +200,7 @@ base64_decode(const char *const input_start, const size_t input_nbytes, struct b
     uint32_t bytes = 0;
     for (size_t j = 0; j != 4; ++j, ++i) {
       if (input[i] >= 128) {
-        return BASE64_STATUS_BAD;
+        return STATUS_BAD;
       }
       const uint8_t mask = DECODE_TABLE[input[i] & 0x7f];
       if (input[i] == '=') {
@@ -207,12 +211,12 @@ base64_decode(const char *const input_start, const size_t input_nbytes, struct b
           padding[0] = true;
         }
         else {
-          return BASE64_STATUS_BAD;
+          return STATUS_BAD;
         }
         bytes <<= 6;
       }
       else if (mask == UINT8_MAX) {
-        return BASE64_STATUS_BAD;
+        return STATUS_BAD;
       }
       else {
         bytes <<= 6;
@@ -223,7 +227,7 @@ base64_decode(const char *const input_start, const size_t input_nbytes, struct b
     if (padding[1]) {
       // Ensure that if the 2nd last byte was a padding byte, the last byte was also a padding byte.
       if (!padding[0]) {
-        return BASE64_STATUS_BAD;
+        return STATUS_BAD;
       }
       *output++ = (bytes >> 16) & 0xff;
       buffer->used -= 2;
@@ -240,12 +244,16 @@ base64_decode(const char *const input_start, const size_t input_nbytes, struct b
     }
   }
 
-  return BASE64_STATUS_OK;
+  return STATUS_OK;
 }
 
 
-enum base64_status
+enum status
 base64_encode(const char *const input_start, const size_t input_nbytes, struct base64_buffer *const buffer) {
+  if (input_start == NULL || buffer == NULL) {
+    return STATUS_EINVAL;
+  }
+
   // Work out how many output bytes we need to store the base64'd input data.
   size_t output_nbytes = input_nbytes / 3;
   if (input_nbytes % 3 != 0) {
@@ -260,7 +268,7 @@ base64_encode(const char *const input_start, const size_t input_nbytes, struct b
     if (buffer->data == NULL) {
       buffer->allocd = 0;
       buffer->used = 0;
-      return BASE64_STATUS_ENOMEM;
+      return STATUS_ENOMEM;
     }
 
     buffer->allocd = output_nbytes;
@@ -293,5 +301,5 @@ base64_encode(const char *const input_start, const size_t input_nbytes, struct b
     }
   }
 
-  return BASE64_STATUS_OK;
+  return STATUS_OK;
 }

@@ -28,10 +28,10 @@ static const struct test_case TESTS[] = {
 int
 main(void) {
   struct base64_buffer buffer;
-  enum base64_status status;
+  enum status status;
 
   status = base64_init(&buffer);
-  if (status != BASE64_STATUS_OK) {
+  if (status != STATUS_OK) {
     perror("base64_init failed");
     return 1;
   }
@@ -41,7 +41,7 @@ main(void) {
     fprintf(stdout, "Test %zu/%zu) encode: ", i + 1, ntests);
 
     status = base64_encode(TESTS[i].input, strlen(TESTS[i].input), &buffer);
-    if (status != BASE64_STATUS_OK) {
+    if (status != STATUS_OK) {
       fprintf(stdout, "error! base64_encode failed");
     }
     else if (buffer.used != strlen(TESTS[i].output)) {
@@ -61,7 +61,7 @@ main(void) {
     fprintf(stdout, " decode: ");
 
     status = base64_decode(TESTS[i].output, strlen(TESTS[i].output), &buffer);
-    if (status != BASE64_STATUS_OK) {
+    if (status != STATUS_OK) {
       fprintf(stdout, "error! base64_decode failed");
     }
     else if (buffer.used != strlen(TESTS[i].input)) {
@@ -82,7 +82,7 @@ main(void) {
   }
 
   status = base64_destroy(&buffer);
-  if (status != BASE64_STATUS_OK) {
+  if (status != STATUS_OK) {
     perror("base64_destroy failed");
     return 1;
   }

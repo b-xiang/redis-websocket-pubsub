@@ -7,12 +7,7 @@
 
 #include <stdlib.h>
 
-
-enum base64_status {
-  BASE64_STATUS_BAD,
-  BASE64_STATUS_OK,
-  BASE64_STATUS_ENOMEM,
-};
+#include "status.h"
 
 
 struct base64_buffer {
@@ -22,9 +17,9 @@ struct base64_buffer {
 };
 
 
-enum base64_status base64_init(struct base64_buffer *buffer);
-enum base64_status base64_destroy(struct base64_buffer *buffer);
-enum base64_status base64_decode(const char *input, size_t input_nbytes, struct base64_buffer *buffer);
-enum base64_status base64_encode(const char *input, size_t input_nbytes, struct base64_buffer *buffer);
+enum status base64_init(struct base64_buffer *buffer);
+enum status base64_destroy(struct base64_buffer *buffer);
+enum status base64_decode(const char *input, size_t input_nbytes, struct base64_buffer *buffer);
+enum status base64_encode(const char *input, size_t input_nbytes, struct base64_buffer *buffer);
 
 #endif  // BASE64_H_

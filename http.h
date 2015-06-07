@@ -7,17 +7,11 @@
 
 #include <stdint.h>
 
+#include "status.h"
 #include "uri.h"
 
 // Forwards declaration from lexer.h.
 struct lexer;
-
-
-enum http_request_parse_status {
-  HTTP_REQUEST_PARSE_BAD = 0,
-  HTTP_REQUEST_PARSE_OK,
-  HTTP_REQUEST_PARSE_ENOMEM,
-};
 
 
 extern const char *const HTTP_METHOD_CONNECT;
@@ -48,10 +42,10 @@ struct http_request {
 };
 
 
-enum http_request_parse_status http_request_init(struct http_request *req);
-enum http_request_parse_status http_request_destroy(struct http_request *req);
-enum http_request_parse_status http_request_add_header(struct http_request *req, const char *name, size_t name_nbytes, const char *value, size_t value_nbytes);
-struct http_request_header *   http_request_find_header(struct http_request *req, const char *name_upper);
-enum http_request_parse_status http_request_parse(struct http_request *req, struct lexer *lex);
+enum status http_request_init(struct http_request *req);
+enum status http_request_destroy(struct http_request *req);
+enum status http_request_add_header(struct http_request *req, const char *name, size_t name_nbytes, const char *value, size_t value_nbytes);
+struct http_request_header *http_request_find_header(const struct http_request *req, const char *name_upper);
+enum status http_request_parse(struct http_request *req, struct lexer *lex);
 
 #endif  // HTTP_H_
