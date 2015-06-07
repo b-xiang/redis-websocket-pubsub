@@ -30,8 +30,10 @@ extern const char *const HTTP_METHOD_PUT;
 extern const char *const HTTP_METHOD_TRACE;
 
 
-struct http_headers {
-  uint32_t size;
+struct http_request_header {
+  char *name;
+  char *value;
+  struct http_request_header *next;
 };
 
 
@@ -42,12 +44,14 @@ struct http_request {
   struct uri uri;
   const char *uri_asterisk;
   const char *host;
-  struct http_headers headers;
+  struct http_request_header *header;
 };
 
 
 enum http_request_parse_status http_request_init(struct http_request *req);
 enum http_request_parse_status http_request_destroy(struct http_request *req);
+enum http_request_parse_status http_request_add_header(struct http_request *req, const char *name, size_t name_nbytes, const char *value, size_t value_nbytes);
+struct http_request_header *   http_request_find_header(struct http_request *req, const char *name_upper);
 enum http_request_parse_status http_request_parse(struct http_request *req, struct lexer *lex);
 
 #endif  // HTTP_H_

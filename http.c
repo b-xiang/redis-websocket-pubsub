@@ -4,6 +4,7 @@
  **/
 #include "http.h"
 
+#include <ctype.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -369,7 +370,6 @@ parse_http_version(struct lexer *const lex) {
     goto fail;
   }
 
-  fprintf(stderr, "HTTP-Version: major=%u minor=%u\n", version_major, version_minor);
   return HTTP_REQUEST_PARSE_OK;
 
 fail:
@@ -551,14 +551,10 @@ parse_http_request(struct http_request *const req, struct lexer *const lex) {
     return status;
   }
 
-  fprintf(stdout, "request uri=");
-  uri_pprint(stdout, &req->uri);
-  fprintf(stdout, "\n");
-
   // *(message-header CRLF)
   while (1) {
     if (lexer_nremaining(lex) == 0) {
-      break;
+      return HTTP_REQUEST_PARSE_BAD;
     }
 
     // field-name
@@ -574,16 +570,15 @@ parse_http_request(struct http_request *const req, struct lexer *const lex) {
     }
     const char *name_end = lexer_upto(lex);
     const size_t name_nbytes = name_end - name_start;
+    if (name_nbytes == 0) {
+      break;
+    }
 
     // ":"
     if (lexer_nremaining(lex) == 0 || lexer_peek(lex) != ':') {
       return HTTP_REQUEST_PARSE_BAD;
     }
     lexer_consume(lex, 1);
-
-    fprintf(stdout, "read header '");
-    fwrite(name_start, 1, name_nbytes, stdout);
-    fprintf(stdout, "'\n");
 
     // LWS
     if (!lexer_consume_lws(lex)) {
@@ -603,18 +598,25 @@ parse_http_request(struct http_request *const req, struct lexer *const lex) {
     }
     const char *value_end = lexer_upto(lex);
     const size_t value_nbytes = value_end - value_start;
-    (void)value_nbytes;
-
-    fprintf(stdout, "read value '");
-    fwrite(value_start, 1, value_nbytes, stdout);
-    fprintf(stdout, "'\n");
 
     // CRLF
     if (lexer_nremaining(lex) < 2 || lexer_memcmp(lex, "\r\n", 2) != 0) {
       return HTTP_REQUEST_PARSE_BAD;
     }
     lexer_consume(lex, 2);
+
+    // Add the header to the request object.
+    status = http_request_add_header(req, name_start, name_nbytes, value_start, value_nbytes);
+    if (status != HTTP_REQUEST_PARSE_OK) {
+      return status;
+    }
   }
+
+  // CRLF
+  if (lexer_nremaining(lex) < 2 || lexer_memcmp(lex, "\r\n", 2) != 0) {
+    return HTTP_REQUEST_PARSE_BAD;
+  }
+  lexer_consume(lex, 2);
 
   // TODO
 
@@ -650,12 +652,22 @@ http_request_destroy(struct http_request *const req) {
     return HTTP_REQUEST_PARSE_BAD;
   }
 
+  // Destroy the URI.
   enum uri_parse_status status = uri_destroy(&req->uri);
   if (status == URI_PARSE_ENOMEM) {
     return HTTP_REQUEST_PARSE_ENOMEM;
   }
   else if (status == URI_PARSE_BAD) {
     return HTTP_REQUEST_PARSE_BAD;
+  }
+
+  // Destroy the headers.
+  for (struct http_request_header *header = req->header; header != NULL; ) {
+    struct http_request_header *const next = header->next;
+    free(header->name);
+    free(header->value);
+    free(header);
+    header = next;
   }
 
   return HTTP_REQUEST_PARSE_OK;
@@ -676,5 +688,87 @@ http_request_parse(struct http_request *const req, struct lexer *const lex) {
     return status;
   }
 
+  fprintf(stdout, "request uri=");
+  uri_pprint(stdout, &req->uri);
+  fprintf(stdout, "\n");
+  for (const struct http_request_header *header = req->header; header != NULL; header = header->next) {
+    fprintf(stdout, "request header '%s' => '%s'\n", header->name, header->value);
+  }
+
   return HTTP_REQUEST_PARSE_OK;
+}
+
+
+enum http_request_parse_status
+http_request_add_header(struct http_request *const req, const char *const name, const size_t name_nbytes, const char *const value, const size_t value_nbytes) {
+  char *name_copy = NULL, *value_copy = NULL;
+
+  if (req == NULL || name == NULL || value == NULL) {
+    return HTTP_REQUEST_PARSE_BAD;
+  }
+
+  // Create a local copy of the name, converted to uppercase.
+  name_copy = malloc(name_nbytes + 1);
+  if (name_copy == NULL) {
+    goto fail;
+  }
+  for (size_t i = 0; i != name_nbytes; ++i) {
+    name_copy[i] = toupper(name[i]);
+  }
+  name_copy[name_nbytes] = '\0';
+
+  // Create a local copy of the value.
+  value_copy = malloc(value_nbytes + 1);
+  if (value_copy == NULL) {
+    goto fail;
+  }
+  memcpy(value_copy, value, value_nbytes);
+  value_copy[value_nbytes] = '\0';
+
+  // See if a header with the name already exists.
+  struct http_request_header *header;
+  for (header = req->header; header != NULL; header = header->next) {
+    if (strcmp(header->name, name_copy) == 0) {
+      break;
+    }
+  }
+
+  // Replace or create the header.
+  if (header == NULL) {
+    header = malloc(sizeof(struct http_request_header));
+    if (header == NULL) {
+      goto fail;
+    }
+    header->name = name_copy;
+    header->value = value_copy;
+    header->next = req->header;
+    req->header = header;
+  }
+  else {
+    free(name_copy);
+    free(header->value);
+    header->value = value_copy;
+  }
+
+  return HTTP_REQUEST_PARSE_OK;
+
+fail:
+  free(name_copy);
+  free(value_copy);
+  return HTTP_REQUEST_PARSE_ENOMEM;
+}
+
+
+struct http_request_header *
+http_request_find_header(struct http_request *const req, const char *const name_upper) {
+  if (req == NULL || name_upper == NULL) {
+    return NULL;
+  }
+
+  for (struct http_request_header *header = req->header; header != NULL; header = header->next) {
+    if (strcmp(header->name, name_upper) == 0) {
+      return header;
+    }
+  }
+  return NULL;
 }
