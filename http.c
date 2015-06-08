@@ -337,9 +337,7 @@ const char *const HTTP_REQUEST_URI_ASTERISK = "*";
  * HTTP-Version = "HTTP" "/" 1*DIGIT "." 1*DIGIT
  **/
 static enum status
-parse_http_version(struct lexer *const lex) {
-  uint32_t version_major, version_minor;
-
+parse_http_version(struct http_request *const req, struct lexer *const lex) {
   // "HTTP"
   if (lexer_nremaining(lex) < 4 || lexer_memcmp(lex, "HTTP", 4) != 0) {
     goto fail;
@@ -355,7 +353,7 @@ parse_http_version(struct lexer *const lex) {
   lexer_consume_lws(lex);
 
   // 1*DIGIT
-  if (!lexer_consume_uint32(lex, &version_major)) {
+  if (!lexer_consume_uint32(lex, &req->version_major)) {
     goto fail;
   }
 
@@ -367,7 +365,7 @@ parse_http_version(struct lexer *const lex) {
   lexer_consume_lws(lex);
 
   // 1*DIGIT
-  if (!lexer_consume_uint32(lex, &version_minor)) {
+  if (!lexer_consume_uint32(lex, &req->version_minor)) {
     goto fail;
   }
 
@@ -474,39 +472,33 @@ parse_http_request_uri(struct http_request *const req, struct lexer *const lex) 
 static enum status
 parse_http_line_request(struct http_request *const req, struct lexer *const lex) {
   // Method
-  fprintf(stderr, "[parse_http_line_request] before parse_http_method\n");
   if (!parse_http_method(req, lex)) {
     goto fail;
   }
 
   // SP
-  fprintf(stderr, "[parse_http_line_request] before SP\n");
   if (lexer_nremaining(lex) == 0 || lexer_peek(lex) != ' ') {
     goto fail;
   }
   lexer_consume(lex, 1);
 
   // Request-URI
-  fprintf(stderr, "[parse_http_line_request] before request-uri\n");
   if (!parse_http_request_uri(req, lex)) {
     goto fail;
   }
 
   // SP
-  fprintf(stderr, "[parse_http_line_request] before SP '%c'\n", lexer_peek(lex));
   if (lexer_nremaining(lex) == 0 || lexer_peek(lex) != ' ') {
     goto fail;
   }
   lexer_consume(lex, 1);
 
   // HTTP-Version
-  fprintf(stderr, "[parse_http_line_request] before HTTP-Version\n");
-  if (!parse_http_version(lex)) {
+  if (!parse_http_version(req, lex)) {
     goto fail;
   }
 
   // CRLF
-  fprintf(stderr, "[parse_http_line_request] before CRLF\n");
   if (lexer_nremaining(lex) < 2 || lexer_memcmp(lex, "\r\n", 2) != 0) {
     goto fail;
   }
@@ -661,6 +653,7 @@ http_request_destroy(struct http_request *const req) {
  **/
 enum status
 http_request_parse(struct http_request *const req, struct lexer *const lex) {
+  const struct http_request_header *header = NULL;
   if (req == NULL || lex == NULL) {
     return STATUS_EINVAL;
   }
@@ -676,6 +669,29 @@ http_request_parse(struct http_request *const req, struct lexer *const lex) {
   for (const struct http_request_header *header = req->header; header != NULL; header = header->next) {
     fprintf(stdout, "request header '%s' => '%s'\n", header->name, header->value);
   }
+
+  // Ensure either the URI has a netloc, or the HOST header exists (or both).
+  if (req->uri.netloc != NULL) {
+    req->host = req->uri.netloc;
+  }
+  header = http_request_find_header(req, "HOST");
+  if (header != NULL) {
+    if (req->host != NULL) {
+      if (strcmp(header->value, req->host) != 0) {
+        fprintf(stderr, "URI netloc '%s' != HOST header '%s'\n", header->value, req->host);
+        return STATUS_BAD;
+      }
+    }
+    else {
+      req->host = header->value;
+    }
+  }
+  if (req->host == NULL) {
+    fprintf(stderr, "Request has no host information.\n");
+    return STATUS_BAD;
+  }
+  // TODO ensure that the host matches what we think we're serving.
+  fprintf(stdout, "Request is for host '%s'\n", req->host);
 
   websocket_write_http_response(req, 1);
 

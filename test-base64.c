@@ -21,7 +21,14 @@ static const struct test_case TESTS[] = {
   {"easure.", "ZWFzdXJlLg=="},
   {"asure.", "YXN1cmUu"},
   {"sure.", "c3VyZS4="},
+  // Test cases from https://tools.ietf.org/html/rfc4648#section-10
   {"", ""},
+  {"f", "Zg=="},
+  {"fo", "Zm8="},
+  {"foo", "Zm9v"},
+  {"foob", "Zm9vYg=="},
+  {"fooba", "Zm9vYmE="},
+  {"foobar", "Zm9vYmFy"},
 };
 
 
