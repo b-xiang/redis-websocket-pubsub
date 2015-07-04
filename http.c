@@ -609,26 +609,28 @@ parse_http_request(struct http_request *const req, struct lexer *const lex) {
 // ================================================================================================
 // Public API for `http_request`.
 // ================================================================================================
-enum status
-http_request_init(struct http_request *const req) {
+struct http_request *
+http_request_init(void) {
+  struct http_request *const req = malloc(sizeof(struct http_request));
   if (req == NULL) {
-    return STATUS_EINVAL;
+    return NULL;
   }
 
   memset(req, 0, sizeof(struct http_request));
   enum status status = uri_init(&req->uri);
   if (status != STATUS_OK) {
-    return status;
+    free(req);
+    return NULL;
   }
 
-  return STATUS_OK;
+  return req;
 }
 
 
 enum status
 http_request_destroy(struct http_request *const req) {
   if (req == NULL) {
-    return STATUS_EINVAL;
+    return STATUS_OK;
   }
 
   // Destroy the URI.
@@ -642,6 +644,9 @@ http_request_destroy(struct http_request *const req) {
     free(header);
     header = next;
   }
+
+  // Destroy the request.
+  free(req);
 
   return status;
 }

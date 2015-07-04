@@ -181,7 +181,7 @@ client_connection_error(struct bufferevent *const bev, const short events, void 
 static void
 client_connection_read_initial(struct client_connection *const client, const char *const buf, const size_t nbytes) {
   struct lexer lex;
-  struct http_request req;
+  struct http_request *req = NULL;
   struct websocket *ws = NULL;
   enum status status;
   bool accepted = false;
@@ -191,32 +191,32 @@ client_connection_read_initial(struct client_connection *const client, const cha
     fprintf(stderr, "[ERROR] failed to construct lexer instance (`lexer_init` failed)\n");
     return;
   }
-  if ((status = http_request_init(&req)) != STATUS_OK) {
-    fprintf(stderr, "[ERROR] failed to construct http_request instance (`http_request_init` failed). status=%d\n", status);
+  if ((req = http_request_init()) == NULL) {
+    fprintf(stderr, "[ERROR] failed to construct http_request instance\n");
     lexer_destroy(&lex);
     return;
   }
   if ((ws = websocket_init()) == NULL) {
     fprintf(stderr, "[ERROR] failed to construct websocket instance\n");
-    http_request_destroy(&req);
+    http_request_destroy(req);
     lexer_destroy(&lex);
     return;
   }
 
   // Try and parse the HTTP request.
-  if ((status = http_request_parse(&req, &lex)) != STATUS_OK) {
+  if ((status = http_request_parse(req, &lex)) != STATUS_OK) {
     fprintf(stderr, "[ERROR] failed to parse the HTTP request. status=%d\n", status);
     websocket_destroy(ws);
-    http_request_destroy(&req);
+    http_request_destroy(req);
     lexer_destroy(&lex);
     return;
   }
 
   // TODO ensure that the host matches what we think we're serving.
-  fprintf(stdout, "Request is for host '%s'\n", req.host);
+  fprintf(stdout, "Request is for host '%s'\n", req->host);
 
   // See if the HTTP request is accepted by the websocket protocol.
-  status = websocket_accept_http_request(&req, client->buf_out, &accepted);
+  status = websocket_accept_http_request(req, client->buf_out, &accepted);
   if (status != STATUS_OK) {
     fprintf(stderr, "[ERROR] websocket_accept_http_request failed. status=%d\n", status);
   }
@@ -239,7 +239,7 @@ client_connection_read_initial(struct client_connection *const client, const cha
       fprintf(stderr, "[ERROR] failed to destroy websocket instance. status=%d\n", status);
     }
   }
-  if ((status = http_request_destroy(&req)) != STATUS_OK) {
+  if ((status = http_request_destroy(req)) != STATUS_OK) {
     fprintf(stderr, "[ERROR] failed to destroy HTTP request instance. status=%d\n", status);
   }
   if (!lexer_destroy(&lex)) {

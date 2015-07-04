@@ -42,10 +42,10 @@ struct http_request {
 };
 
 
-enum status http_request_init(struct http_request *req);
-enum status http_request_destroy(struct http_request *req);
-enum status http_request_add_header(struct http_request *req, const char *name, size_t name_nbytes, const char *value, size_t value_nbytes);
+struct http_request *       http_request_init(void);
+enum status                 http_request_destroy(struct http_request *req);
+enum status                 http_request_add_header(struct http_request *req, const char *name, size_t name_nbytes, const char *value, size_t value_nbytes);
 struct http_request_header *http_request_find_header(const struct http_request *req, const char *name_upper);
-enum status http_request_parse(struct http_request *req, struct lexer *lex);
+enum status                 http_request_parse(struct http_request *req, struct lexer *lex);
 
 #endif  // HTTP_H_

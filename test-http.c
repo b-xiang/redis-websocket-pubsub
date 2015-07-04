@@ -9,8 +9,8 @@
 
 int
 main(void) {
-  struct http_request req;
-  if (!http_request_init(&req)) {
+  struct http_request *req = NULL;
+  if ((req = http_request_init()) == NULL) {
     perror("http_request_init failed");
     return 1;
   }
@@ -33,14 +33,14 @@ main(void) {
     return 1;
   }
 
-  const bool success = http_request_parse(&req, &lex);
+  const bool success = http_request_parse(req, &lex);
   printf("http_request_parse => %d\n", success);
 
   if (!lexer_destroy(&lex)) {
     perror("lexer_destroy failed");
     return 1;
   }
-  if (!http_request_destroy(&req)) {
+  if (!http_request_destroy(req)) {
     perror("http_request_destroy failed");
     return 1;
   }
