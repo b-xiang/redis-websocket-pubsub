@@ -21,19 +21,7 @@
 
 
 struct client_connection {
-  // The file descriptor of the socket.
-  int fd;
-  // Whether or not the socket has been shutdown.
-  bool is_shutdown;
-  // The address of the client.
-  struct sockaddr_in addr;
-  // The libevent bufferevent for the socket.
-  struct bufferevent *bev;
-  // The libevent output buffer.
-  struct evbuffer *buf_out;
-  // If the client has established a websocket connection, this points to the websocket state.
   struct websocket *ws;
-  // Linked list.
   struct client_connection *next;
 };
 
@@ -165,29 +153,27 @@ client_connection_error(struct bufferevent *const bev, const short events, void 
   struct client_connection *const client = arg;
 
   if (events & EVBUFFER_EOF) {
-    fprintf(stderr, "[INFO] Remote host disconnected on fd=%d\n", client->fd);
-    client->is_shutdown = true;
+    fprintf(stderr, "[INFO] Remote host disconnected on fd=%d\n", client->ws->fd);
+    client->ws->is_shutdown = true;
   }
   else if (events & EVBUFFER_TIMEOUT) {
-    fprintf(stderr, "[INFO] Remote host timed out on fd=%d\n", client->fd);
+    fprintf(stderr, "[INFO] Remote host timed out on fd=%d\n", client->ws->fd);
   }
   else {
-    fprintf(stderr, "[INFO] Remote host experienced an unknown error (0x%08x) on fd=%d\n", events, client->fd);
+    fprintf(stderr, "[INFO] Remote host experienced an unknown error (0x%08x) on fd=%d\n", events, client->ws->fd);
   }
   client_connection_destroy(client);
 }
 
 
 static void
-client_connection_read_initial(struct client_connection *const client, const char *const buf, const size_t nbytes) {
+client_connection_read_initial(struct client_connection *const client, const uint8_t *const buf, const size_t nbytes) {
   struct lexer lex;
   struct http_request *req = NULL;
-  struct websocket *ws = NULL;
   enum status status;
-  bool accepted = false;
 
   // Initialise our required data structures.
-  if (!lexer_init(&lex, &buf[0], &buf[0] + nbytes)) {
+  if (!lexer_init(&lex, (const char *)&buf[0], (const char *)&buf[0] + nbytes)) {
     fprintf(stderr, "[ERROR] failed to construct lexer instance (`lexer_init` failed)\n");
     return;
   }
@@ -196,17 +182,10 @@ client_connection_read_initial(struct client_connection *const client, const cha
     lexer_destroy(&lex);
     return;
   }
-  if ((ws = websocket_init()) == NULL) {
-    fprintf(stderr, "[ERROR] failed to construct websocket instance\n");
-    http_request_destroy(req);
-    lexer_destroy(&lex);
-    return;
-  }
 
   // Try and parse the HTTP request.
   if ((status = http_request_parse(req, &lex)) != STATUS_OK) {
     fprintf(stderr, "[ERROR] failed to parse the HTTP request. status=%d\n", status);
-    websocket_destroy(ws);
     http_request_destroy(req);
     lexer_destroy(&lex);
     return;
@@ -216,29 +195,17 @@ client_connection_read_initial(struct client_connection *const client, const cha
   fprintf(stdout, "Request is for host '%s'\n", req->host);
 
   // See if the HTTP request is accepted by the websocket protocol.
-  status = websocket_accept_http_request(req, client->buf_out, &accepted);
+  status = websocket_accept_http_request(client->ws, req);
   if (status != STATUS_OK) {
     fprintf(stderr, "[ERROR] websocket_accept_http_request failed. status=%d\n", status);
   }
-  else {
-    // If we accepted the connection, keep the websocket struct around.
-    fprintf(stderr, "[INFO] accepted? %d\n", accepted);
-    if (accepted) {
-      client->ws = ws;
-    }
-  }
 
   // Flush the output buffer.
-  if (bufferevent_write_buffer(client->bev, client->buf_out) == -1) {
+  if (bufferevent_write_buffer(client->ws->bev, client->ws->buf_out) == -1) {
     fprintf(stderr, "[ERROR] failed to flush output buffer (`bufferevent_write_buffer` failed)\n");
   }
 
   // Free up resources.
-  if (!accepted) {
-    if ((status = websocket_destroy(ws)) != STATUS_OK) {
-      fprintf(stderr, "[ERROR] failed to destroy websocket instance. status=%d\n", status);
-    }
-  }
   if ((status = http_request_destroy(req)) != STATUS_OK) {
     fprintf(stderr, "[ERROR] failed to destroy HTTP request instance. status=%d\n", status);
   }
@@ -250,9 +217,7 @@ client_connection_read_initial(struct client_connection *const client, const cha
 
 
 static void
-client_connection_read_websocket(struct client_connection *const client, const char *const buf, const size_t nbytes) {
-  (void)client;
-  // TODO send the data to be processed by the websocket logic.
+client_connection_read_websocket(struct client_connection *const client, const uint8_t *const buf, const size_t nbytes) {
   fprintf(stderr, "[DEBUG] data for websocket logic:");
   for (size_t i = 0; i != nbytes; ++i) {
     if (isprint(buf[i]) && !isspace(buf[i])) {
@@ -263,28 +228,38 @@ client_connection_read_websocket(struct client_connection *const client, const c
     }
   }
   fprintf(stderr, "\n");
+
+  enum status status = websocket_consume(client->ws, buf, nbytes);
+  if (status != STATUS_OK) {
+    fprintf(stderr, "[WARN] websocket_consume failed. status=%d\n", status);
+  }
+  else {
+    if (client->ws->in_state == WS_CLOSED) {
+      client_connection_destroy(client);
+    }
+  }
 }
 
 
 static void
 client_connection_read(struct bufferevent *const bev, void *const arg) {
   (void)bev;
+  static uint8_t buf[4096];
   struct client_connection *const client = arg;
-  char buf[4096];
 
   // Read the data.
   const size_t nbytes = bufferevent_read(bev, buf, sizeof(buf));
-  fprintf(stderr, "[DEBUG] bufferevent_read read in %zu bytes from fd=%d\n", nbytes, client->fd);
+  fprintf(stderr, "[DEBUG] bufferevent_read read in %zu bytes from fd=%d\n", nbytes, client->ws->fd);
   if (nbytes == 0) {
     return;
   }
 
   // If the client hasn't tried to establish a websocket connection yet, this must be the inital
   // HTTP `Upgrade` request.
-  if (client->ws == NULL) {
+  if (client->ws->in_state == WS_NEEDS_HTTP_UPGRADE) {
     client_connection_read_initial(client, buf, nbytes);
     // If we failed to process the HTTP request as a websocket establishing connection, drop the client.
-    if (client->ws == NULL) {
+    if (client->ws->in_state == WS_NEEDS_HTTP_UPGRADE) {
       client_connection_destroy(client);
     }
   }
@@ -296,6 +271,13 @@ client_connection_read(struct bufferevent *const bev, void *const arg) {
 
 static struct client_connection *
 client_connection_create(const int fd, const struct sockaddr_in *const addr) {
+  // Construct the websocket connection object.
+  struct websocket *const ws = websocket_init(fd, addr);
+  if (ws == NULL) {
+    return NULL;
+  }
+
+  // Construct the client connection object.
   struct client_connection *const client = malloc(sizeof(struct client_connection));
   if (client == NULL) {
     fprintf(stderr, "[ERROR] failed to malloc: %s\n", strerror(errno));
@@ -304,30 +286,20 @@ client_connection_create(const int fd, const struct sockaddr_in *const addr) {
 
   // Construct the client_connection instance and insert it into the list of all clients.
   memset(client, 0, sizeof(struct client_connection));
-  client->fd = fd;
-  client->is_shutdown = false;
-  client->addr = *addr;
-  client->bev = bufferevent_new(fd, &client_connection_read, NULL, &client_connection_error, client);
-  client->buf_out = evbuffer_new();
-  client->ws = NULL;
+  client->ws = ws;
   client->next = clients;
   clients = client;
 
   // Configure the buffered I/O event.
-  if (bufferevent_base_set(server_loop, client->bev) == -1) {
-    fprintf(stderr, "[ERROR] `bufferevent_base_set` failed on fd=%d\n", client->fd);
+  ws->bev = bufferevent_new(fd, &client_connection_read, NULL, &client_connection_error, client);
+  if (bufferevent_base_set(server_loop, ws->bev) == -1) {
+    fprintf(stderr, "[ERROR] `bufferevent_base_set` failed on fd=%d\n", ws->fd);
     client_connection_destroy(client);
     return NULL;
   }
-  bufferevent_settimeout(client->bev, 60, 0);
-  if (bufferevent_enable(client->bev, EV_READ) == -1) {
-    fprintf(stderr, "[ERROR] failed to enable the client read bufferevent (`bufferevent_enable` failed) on fd=%d\n", client->fd);
-    client_connection_destroy(client);
-    return NULL;
-  }
-
-  // Configure the output buffer.
-  if (client->buf_out == NULL) {
+  bufferevent_settimeout(ws->bev, 60, 0);
+  if (bufferevent_enable(ws->bev, EV_READ) == -1) {
+    fprintf(stderr, "[ERROR] failed to enable the client read bufferevent (`bufferevent_enable` failed) on fd=%d\n", ws->fd);
     client_connection_destroy(client);
     return NULL;
   }
@@ -338,29 +310,7 @@ client_connection_create(const int fd, const struct sockaddr_in *const addr) {
 
 static void
 _client_connection_destroy(struct client_connection *const client) {
-  int ret;
-  enum status status;
-  if (client->buf_out != NULL) {
-    evbuffer_free(client->buf_out);
-  }
-  if (client->bev != NULL) {
-    bufferevent_free(client->bev);
-  }
-  if (client->ws != NULL) {
-    if ((status = websocket_destroy(client->ws)) != STATUS_OK) {
-      fprintf(stderr, "[WARNING] `websocket_destroy` failed with status=%d\n", status);
-    }
-  }
-  if (!client->is_shutdown) {
-    ret = shutdown(client->fd, SHUT_RDWR);
-    if (ret != 0) {
-      fprintf(stderr, "[WARNING] `shutdown` on fd=%d failed: %s\n", client->fd, strerror(errno));
-    }
-  }
-  if (client->fd >= 0) {
-    ret = close(client->fd);
-    fprintf(stderr, "[WARNING] `close` on fd=%d failed: %s\n", client->fd, strerror(errno));
-  }
+  websocket_destroy(client->ws);
   free(client);
 }
 
