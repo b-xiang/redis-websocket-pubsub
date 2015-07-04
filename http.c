@@ -11,7 +11,6 @@
 #include <string.h>
 
 #include "lexer.h"
-#include "websocket.h"
 
 /*
 https://tools.ietf.org/html/rfc2616#section-2.2
@@ -690,10 +689,6 @@ http_request_parse(struct http_request *const req, struct lexer *const lex) {
     fprintf(stderr, "Request has no host information.\n");
     return STATUS_BAD;
   }
-  // TODO ensure that the host matches what we think we're serving.
-  fprintf(stdout, "Request is for host '%s'\n", req->host);
-
-  websocket_write_http_response(req, 1);
 
   return STATUS_OK;
 }
