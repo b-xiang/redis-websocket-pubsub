@@ -27,6 +27,15 @@ enum websocket_state {
   WS_NEEDS_PAYLOAD,
 };
 
+enum websocket_opcode {
+  WS_OPCODE_CONTINUATION_FRAME = 0x00,
+  WS_OPCODE_TEXT_FRAME = 0x01,
+  WS_OPCODE_BINARY_FRAME = 0x02,
+  WS_OPCODE_CONNECTION_CLOSE = 0x08,
+  WS_OPCODE_PING = 0x09,
+  WS_OPCODE_PONG = 0x0a,
+};
+
 struct websocket {
   // The file descriptor of the socket.
   int fd;
@@ -37,7 +46,11 @@ struct websocket {
   // The libevent bufferevent for the socket.
   struct bufferevent *bev;
   // The libevent output buffer.
-  struct evbuffer *buf_out;
+  struct evbuffer *out;
+  // The libevent unmasked input buffer for the current frame.
+  struct evbuffer *in_frame;
+  // THe libevent unmasked input buffer for the current message.
+  struct evbuffer *in_message;
   // The state of the websocket input processing.
   enum websocket_state in_state;
 
@@ -45,13 +58,14 @@ struct websocket {
   bool in_is_masked;
   uint8_t in_opcode;
   uint8_t in_reserved;
-  uint64_t in_length;
   uint32_t in_masking_key;
+  uint64_t in_length;
 };
 
 struct websocket *websocket_init(int fd, const struct sockaddr_in *addr);
 enum status       websocket_destroy(struct websocket *ws);
 enum status       websocket_accept_http_request(struct websocket *ws, const struct http_request *req);
 enum status       websocket_consume(struct websocket *ws, const uint8_t *bytes, size_t nbytes);
+enum status       websocket_flush_output(struct websocket *ws);
 
 #endif  // WEBSOCKET_H_

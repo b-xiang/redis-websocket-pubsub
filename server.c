@@ -1,5 +1,4 @@
 #include <arpa/inet.h>
-#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
@@ -192,7 +191,7 @@ client_connection_read_initial(struct client_connection *const client, const uin
   }
 
   // TODO ensure that the host matches what we think we're serving.
-  fprintf(stdout, "Request is for host '%s'\n", req->host);
+  fprintf(stderr, "Request is for host '%s'\n", req->host);
 
   // See if the HTTP request is accepted by the websocket protocol.
   status = websocket_accept_http_request(client->ws, req);
@@ -201,9 +200,7 @@ client_connection_read_initial(struct client_connection *const client, const uin
   }
 
   // Flush the output buffer.
-  if (bufferevent_write_buffer(client->ws->bev, client->ws->buf_out) == -1) {
-    fprintf(stderr, "[ERROR] failed to flush output buffer (`bufferevent_write_buffer` failed)\n");
-  }
+  websocket_flush_output(client->ws);
 
   // Free up resources.
   if ((status = http_request_destroy(req)) != STATUS_OK) {
@@ -218,25 +215,12 @@ client_connection_read_initial(struct client_connection *const client, const uin
 
 static void
 client_connection_read_websocket(struct client_connection *const client, const uint8_t *const buf, const size_t nbytes) {
-  fprintf(stderr, "[DEBUG] data for websocket logic:");
-  for (size_t i = 0; i != nbytes; ++i) {
-    if (isprint(buf[i]) && !isspace(buf[i])) {
-      fprintf(stderr, "  %c", buf[i]);
-    }
-    else {
-      fprintf(stderr, " %02x", (unsigned int)buf[i]);
-    }
-  }
-  fprintf(stderr, "\n");
-
   enum status status = websocket_consume(client->ws, buf, nbytes);
   if (status != STATUS_OK) {
     fprintf(stderr, "[WARN] websocket_consume failed. status=%d\n", status);
   }
-  else {
-    if (client->ws->in_state == WS_CLOSED) {
-      client_connection_destroy(client);
-    }
+  else if (client->ws->in_state == WS_CLOSED) {
+    client_connection_destroy(client);
   }
 }
 
