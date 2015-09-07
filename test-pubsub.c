@@ -1,4 +1,5 @@
 #include <getopt.h>
+#include <inttypes.h>
 #include <regex.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -170,21 +171,21 @@ on_http_course_thread_request(struct evhttp_request *const req, redisAsyncContex
     evbuffer_free(response_buffer);
   }
 #endif
-  printf("[on_http_course_thread_request] req=%p ctx=%p id=%llu\n", req, ctx, id);
+  printf("[on_http_course_thread_request] req=%p ctx=%p id=%" PRIu64 "\n", req, ctx, id);
   evhttp_send_error(req, 501, NULL);  // 501: Not Implemented.
 }
 
 
 static void
 on_http_thread_request(struct evhttp_request *const req, redisAsyncContext *const ctx, const uint64_t id) {
-  printf("[on_http_course_thread_request] req=%p ctx=%p id=%llu\n", req, ctx, id);
+  printf("[on_http_course_thread_request] req=%p ctx=%p id=%" PRIu64 "\n", req, ctx, id);
   evhttp_send_error(req, 501, NULL);  // 501: Not Implemented.
 }
 
 
 static void
 on_http_user_thread_request(struct evhttp_request *const req, redisAsyncContext *const ctx, const uint64_t id) {
-  printf("[on_http_course_thread_request] req=%p ctx=%p id=%llu\n", req, ctx, id);
+  printf("[on_http_course_thread_request] req=%p ctx=%p id=%" PRIu64 "\n", req, ctx, id);
   evhttp_send_error(req, 501, NULL);  // 501: Not Implemented.
 }
 

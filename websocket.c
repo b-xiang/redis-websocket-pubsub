@@ -6,9 +6,12 @@
 
 #include <assert.h>
 #include <ctype.h>
+#include <endian.h>
 #include <errno.h>
+#include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 
 #include <event.h>
@@ -191,11 +194,11 @@ websocket_send_frame(struct websocket *const ws, const enum websocket_opcode opc
 
   // Write an extended payload length if it's needed.
   if (nbytes > UINT16_MAX) {
-    uint64_t length = htonll(nbytes);
+    uint64_t length = htobe64(nbytes);
     evbuffer_add(ws->out, &length, 8);
   }
   else if (nbytes > 125) {
-    uint16_t length = htons(nbytes);
+    uint16_t length = htobe16(nbytes);
     evbuffer_add(ws->out, &length, 2);
   }
 
@@ -226,7 +229,7 @@ websocket_consume_needs_initial(struct websocket *const ws, const uint8_t *const
 
   // Validate the reserved bits and the masking flag.
   // "MUST be 0 unless an extension is negotiated that defines meanings for non-zero values."
-  DEBUG("websocket_consume_needs_initial", "Received new frame header fin=%u reserved=%u opcode=%u is_masked=%u, length=%llu\n", ws->in_is_final, ws->in_reserved, ws->in_opcode, ws->in_is_masked, ws->in_length);
+  DEBUG("websocket_consume_needs_initial", "Received new frame header fin=%u reserved=%u opcode=%u is_masked=%u, length=%" PRIu64 "\n", ws->in_is_final, ws->in_reserved, ws->in_opcode, ws->in_is_masked, ws->in_length);
   if (ws->in_reserved != 0) {
     ws->in_state = WS_CLOSED;
     return;
@@ -273,7 +276,7 @@ static void
 websocket_consume_needs_length_64(struct websocket *const ws, const uint8_t *const bytes, const size_t nbytes) {
   assert(nbytes == 8);
   // Update our length and fail the connection if the payload size is too large.
-  ws->in_length = ntohll(*((uint64_t *)bytes));
+  ws->in_length = be64toh(*((uint64_t *)bytes));
   if (ws->in_length > MAX_PAYLOAD_LENGTH) {
     ws->in_state = WS_CLOSED;
     return;

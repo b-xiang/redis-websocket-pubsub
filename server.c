@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <unistd.h>
 
 #include <event.h>
 #include <event2/event.h>
@@ -19,6 +20,9 @@
 #include "http.h"
 #include "websocket.h"
 
+#ifndef SA_RESTART
+#define SA_RESTART   0x10000000 /* Restart syscall on signal return.  */
+#endif
 
 struct client_connection {
   struct websocket *ws;
@@ -304,10 +308,10 @@ _client_connection_destroy(struct client_connection *const client) {
 
 static void
 client_connection_destroy(struct client_connection *const target) {
-  DEBUG("[client_connection_destroy]", "target=%p\n", target);
+  DEBUG("[client_connection_destroy]", "target=%p\n", (void *)target);
   struct client_connection *client, *prev = NULL;
   for (client = clients; client != NULL; client = client->next) {
-    DEBUG("[client_connection_destroy]", "target=%p client=%p\n", target, client);
+    DEBUG("[client_connection_destroy]", "target=%p client=%p\n", (void *)target, (void *)client);
     if (client == target) {
       // Update the linked list.
       if (prev == NULL) {
