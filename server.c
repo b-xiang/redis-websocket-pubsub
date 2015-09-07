@@ -27,6 +27,7 @@
 struct client_connection {
   struct websocket *ws;
   struct client_connection *next;
+  bool needs_shutdown;
 };
 
 static struct client_connection *client_connection_create(int fd, const struct sockaddr_in *addr);
@@ -161,6 +162,9 @@ client_connection_onerror(struct bufferevent *const bev, const short events, voi
     INFO("client_connection_onerror", "Remote host disconnected on fd=%d\n", client->ws->fd);
     client->ws->is_shutdown = true;
   }
+  else if (events & BEV_EVENT_ERROR) {
+    INFO("client_connection_onerror", "Got an error on fd=%d: %s\n", client->ws->fd, evutil_socket_error_to_string(EVUTIL_SOCKET_ERROR()));
+  }
   else if (events & EVBUFFER_TIMEOUT) {
     INFO("client_connection_onerror", "Remote host timed out on fd=%d\n", client->ws->fd);
   }
@@ -249,12 +253,22 @@ client_connection_onread(struct bufferevent *const bev, void *const arg) {
     client_connection_onread_initial(client, buf, nbytes);
     // If we failed to process the HTTP request as a websocket establishing connection, drop the client.
     if (client->ws->in_state == WS_NEEDS_HTTP_UPGRADE) {
-      WARNING("client_connection_onread", "Failed to upgrade to websocket. Aborting connection on fd=%d\n", client->ws->fd);
-      websocket_shutdown(client->ws);
+      WARNING("client_connection_onread", "Failed to upgrade to websocket. Aborting connection on client=%p fd=%d\n", client, client->ws->fd);
+      client->needs_shutdown = true;
     }
   }
   else {
     client_connection_onread_websocket(client, buf, nbytes);
+  }
+}
+
+
+static void
+client_connection_onwrite(struct bufferevent *const bev, void *const arg) {
+  struct client_connection *const client = (struct client_connection *)arg;
+  DEBUG("client_connection_onwrite", "bev=%p client=%p fd=%d needs_shutdown=%d\n", bev, client, client->ws->fd, client->needs_shutdown);
+  if (client->needs_shutdown) {
+    websocket_shutdown(client->ws);
   }
 }
 
@@ -278,6 +292,7 @@ client_connection_create(const int fd, const struct sockaddr_in *const addr) {
   memset(client, 0, sizeof(struct client_connection));
   client->ws = ws;
   client->next = clients;
+  client->needs_shutdown = false;
   clients = client;
 
   // Configure the buffered I/O event.
@@ -287,9 +302,9 @@ client_connection_create(const int fd, const struct sockaddr_in *const addr) {
     client_connection_destroy(client);
     return NULL;
   }
-  bufferevent_setcb(ws->bev, &client_connection_onread, NULL, &client_connection_onerror, client);
+  bufferevent_setcb(ws->bev, &client_connection_onread, &client_connection_onwrite, &client_connection_onerror, client);
   bufferevent_settimeout(ws->bev, 60, 0);
-  if (bufferevent_enable(ws->bev, EV_READ) == -1) {
+  if (bufferevent_enable(ws->bev, EV_READ | EV_WRITE) == -1) {
     ERROR("client_connection_create", "failed to enable the client read bufferevent (`bufferevent_enable` failed) on fd=%d\n", ws->fd);
     client_connection_destroy(client);
     return NULL;
@@ -308,10 +323,10 @@ _client_connection_destroy(struct client_connection *const client) {
 
 static void
 client_connection_destroy(struct client_connection *const target) {
-  DEBUG("[client_connection_destroy]", "target=%p\n", (void *)target);
+  DEBUG("client_connection_destroy", "target=%p\n", (void *)target);
   struct client_connection *client, *prev = NULL;
   for (client = clients; client != NULL; client = client->next) {
-    DEBUG("[client_connection_destroy]", "target=%p client=%p\n", (void *)target, (void *)client);
+    DEBUG("client_connection_destroy", "target=%p client=%p\n", (void *)target, (void *)client);
     if (client == target) {
       // Update the linked list.
       if (prev == NULL) {
