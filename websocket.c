@@ -6,7 +6,6 @@
 
 #include <assert.h>
 #include <ctype.h>
-#include <endian.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <stdlib.h>
@@ -18,6 +17,7 @@
 #include <openssl/sha.h>
 
 #include "base64.h"
+#include "compat_endian.h"
 #include "http.h"
 #include "logging.h"
 
