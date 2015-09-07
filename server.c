@@ -15,6 +15,7 @@
 #include <event2/event.h>
 
 #include "lexer.h"
+#include "logging.h"
 #include "http.h"
 #include "websocket.h"
 
@@ -116,9 +117,9 @@ parse_argv(int argc, char *const *argv) {
 // ================================================================================================
 static void
 sighandler(const int signal) {
-  fprintf(stderr, "[INFO] Received signal %d. Shutting down...\n", signal);
+  INFO("sighandler", "Received signal %d. Shutting down...\n", signal);
   if (event_base_loopexit(server_loop, NULL) == -1) {
-    fprintf(stderr, "[ERROR] Error shutting down server\n");
+    ERROR0("sighandler", "Error shutting down server\n");
   }
 }
 
@@ -147,56 +148,57 @@ set_nonblocking(const int fd) {
 // Listening socket's libevent callbacks.
 // ================================================================================================
 static void
-client_connection_error(struct bufferevent *const bev, const short events, void *const arg) {
+client_connection_onerror(struct bufferevent *const bev, const short events, void *const arg) {
   (void)bev;
-  struct client_connection *const client = arg;
+  struct client_connection *const client = (struct client_connection *)arg;
+  DEBUG("client_connection_onerror", "events=%d fd=%d\n", events, client->ws->fd);
 
   if (events & EVBUFFER_EOF) {
-    fprintf(stderr, "[INFO] Remote host disconnected on fd=%d\n", client->ws->fd);
+    INFO("client_connection_onerror", "Remote host disconnected on fd=%d\n", client->ws->fd);
     client->ws->is_shutdown = true;
   }
   else if (events & EVBUFFER_TIMEOUT) {
-    fprintf(stderr, "[INFO] Remote host timed out on fd=%d\n", client->ws->fd);
+    INFO("client_connection_onerror", "Remote host timed out on fd=%d\n", client->ws->fd);
   }
   else {
-    fprintf(stderr, "[INFO] Remote host experienced an unknown error (0x%08x) on fd=%d\n", events, client->ws->fd);
+    INFO("client_connection_onerror", "Remote host experienced an unknown error (0x%08x) on fd=%d\n", events, client->ws->fd);
   }
   client_connection_destroy(client);
 }
 
 
 static void
-client_connection_read_initial(struct client_connection *const client, const uint8_t *const buf, const size_t nbytes) {
+client_connection_onread_initial(struct client_connection *const client, const uint8_t *const buf, const size_t nbytes) {
   struct lexer lex;
   struct http_request *req = NULL;
   enum status status;
 
   // Initialise our required data structures.
   if (!lexer_init(&lex, (const char *)&buf[0], (const char *)&buf[0] + nbytes)) {
-    fprintf(stderr, "[ERROR] failed to construct lexer instance (`lexer_init` failed)\n");
+    ERROR0("client_connection_onread_initial", "failed to construct lexer instance (`lexer_init` failed)\n");
     return;
   }
   if ((req = http_request_init()) == NULL) {
-    fprintf(stderr, "[ERROR] failed to construct http_request instance\n");
+    WARNING0("client_connection_onread_initial", "failed to construct http_request instance\n");
     lexer_destroy(&lex);
     return;
   }
 
   // Try and parse the HTTP request.
   if ((status = http_request_parse(req, &lex)) != STATUS_OK) {
-    fprintf(stderr, "[ERROR] failed to parse the HTTP request. status=%d\n", status);
+    WARNING("client_connection_onread_initial", "failed to parse the HTTP request. status=%d\n", status);
     http_request_destroy(req);
     lexer_destroy(&lex);
     return;
   }
 
   // TODO ensure that the host matches what we think we're serving.
-  fprintf(stderr, "Request is for host '%s'\n", req->host);
+  DEBUG("client_connection_onread_initial", "Request is for host '%s'\n", req->host);
 
   // See if the HTTP request is accepted by the websocket protocol.
   status = websocket_accept_http_request(client->ws, req);
   if (status != STATUS_OK) {
-    fprintf(stderr, "[ERROR] websocket_accept_http_request failed. status=%d\n", status);
+    WARNING("client_connection_onread_initial", "websocket_accept_http_request failed. status=%d\n", status);
   }
 
   // Flush the output buffer.
@@ -204,20 +206,19 @@ client_connection_read_initial(struct client_connection *const client, const uin
 
   // Free up resources.
   if ((status = http_request_destroy(req)) != STATUS_OK) {
-    fprintf(stderr, "[ERROR] failed to destroy HTTP request instance. status=%d\n", status);
+    ERROR("client_connection_onread_initial", "failed to destroy HTTP request instance. status=%d\n", status);
   }
   if (!lexer_destroy(&lex)) {
-    fprintf(stderr, "[ERROR] failed to destroy lexer instance (`lexer_destroy` failed)\n");
+    ERROR0("client_connection_onread_initial", "failed to destroy lexer instance (`lexer_destroy` failed)\n");
   }
-  return;
 }
 
 
 static void
-client_connection_read_websocket(struct client_connection *const client, const uint8_t *const buf, const size_t nbytes) {
+client_connection_onread_websocket(struct client_connection *const client, const uint8_t *const buf, const size_t nbytes) {
   enum status status = websocket_consume(client->ws, buf, nbytes);
   if (status != STATUS_OK) {
-    fprintf(stderr, "[WARN] websocket_consume failed. status=%d\n", status);
+    WARNING("client_connection_onread_websocket", "websocket_consume failed. status=%d\n", status);
   }
   else if (client->ws->in_state == WS_CLOSED) {
     client_connection_destroy(client);
@@ -226,14 +227,14 @@ client_connection_read_websocket(struct client_connection *const client, const u
 
 
 static void
-client_connection_read(struct bufferevent *const bev, void *const arg) {
+client_connection_onread(struct bufferevent *const bev, void *const arg) {
   (void)bev;
   static uint8_t buf[4096];
-  struct client_connection *const client = arg;
+  struct client_connection *const client = (struct client_connection *)arg;
 
   // Read the data.
   const size_t nbytes = bufferevent_read(bev, buf, sizeof(buf));
-  fprintf(stderr, "[DEBUG] bufferevent_read read in %zu bytes from fd=%d\n", nbytes, client->ws->fd);
+  DEBUG("client_connection_onread", "bufferevent_read read in %zu bytes from fd=%d\n", nbytes, client->ws->fd);
   if (nbytes == 0) {
     return;
   }
@@ -241,14 +242,15 @@ client_connection_read(struct bufferevent *const bev, void *const arg) {
   // If the client hasn't tried to establish a websocket connection yet, this must be the inital
   // HTTP `Upgrade` request.
   if (client->ws->in_state == WS_NEEDS_HTTP_UPGRADE) {
-    client_connection_read_initial(client, buf, nbytes);
+    client_connection_onread_initial(client, buf, nbytes);
     // If we failed to process the HTTP request as a websocket establishing connection, drop the client.
     if (client->ws->in_state == WS_NEEDS_HTTP_UPGRADE) {
-      client_connection_destroy(client);
+      WARNING("client_connection_onread", "Failed to upgrade to websocket. Aborting connection on fd=%d\n", client->ws->fd);
+      websocket_shutdown(client->ws);
     }
   }
   else {
-    client_connection_read_websocket(client, buf, nbytes);
+    client_connection_onread_websocket(client, buf, nbytes);
   }
 }
 
@@ -264,7 +266,7 @@ client_connection_create(const int fd, const struct sockaddr_in *const addr) {
   // Construct the client connection object.
   struct client_connection *const client = malloc(sizeof(struct client_connection));
   if (client == NULL) {
-    fprintf(stderr, "[ERROR] failed to malloc: %s\n", strerror(errno));
+    ERROR("client_connection_create", "failed to malloc: %s\n", strerror(errno));
     return NULL;
   }
 
@@ -275,15 +277,16 @@ client_connection_create(const int fd, const struct sockaddr_in *const addr) {
   clients = client;
 
   // Configure the buffered I/O event.
-  ws->bev = bufferevent_new(fd, &client_connection_read, NULL, &client_connection_error, client);
-  if (bufferevent_base_set(server_loop, ws->bev) == -1) {
-    fprintf(stderr, "[ERROR] `bufferevent_base_set` failed on fd=%d\n", ws->fd);
+  ws->bev = bufferevent_socket_new(server_loop, fd, BEV_OPT_CLOSE_ON_FREE);
+  if (ws->bev == NULL) {
+    ERROR0("client_connection_create", "`bufferevent_socket_new` failed.\n");
     client_connection_destroy(client);
     return NULL;
   }
+  bufferevent_setcb(ws->bev, &client_connection_onread, NULL, &client_connection_onerror, client);
   bufferevent_settimeout(ws->bev, 60, 0);
   if (bufferevent_enable(ws->bev, EV_READ) == -1) {
-    fprintf(stderr, "[ERROR] failed to enable the client read bufferevent (`bufferevent_enable` failed) on fd=%d\n", ws->fd);
+    ERROR("client_connection_create", "failed to enable the client read bufferevent (`bufferevent_enable` failed) on fd=%d\n", ws->fd);
     client_connection_destroy(client);
     return NULL;
   }
@@ -301,9 +304,11 @@ _client_connection_destroy(struct client_connection *const client) {
 
 static void
 client_connection_destroy(struct client_connection *const target) {
+  DEBUG("[client_connection_destroy]", "target=%p\n", target);
   struct client_connection *client, *prev = NULL;
   for (client = clients; client != NULL; client = client->next) {
-    if (client != target) {
+    DEBUG("[client_connection_destroy]", "target=%p client=%p\n", target, client);
+    if (client == target) {
       // Update the linked list.
       if (prev == NULL) {
         clients = client->next;
@@ -337,25 +342,25 @@ setup_connection(const int fd, const struct sockaddr_in *const addr) {
   struct client_connection *client;
 
   if (set_nonblocking(fd) != 0) {
-    fprintf(stderr, "[ERROR] failed to set fd=%d to non-blocking: %s\n", fd, strerror(errno));
+    ERROR("setup_connection", "failed to set fd=%d to non-blocking: %s\n", fd, strerror(errno));
     return;
   }
 
   client = client_connection_create(fd, addr);
   if (client == NULL) {
-    fprintf(stderr, "[ERROR] failed to create client connection object\n");
+    ERROR0("setup_connection", "failed to create client connection object\n");
     return;
   }
 }
 
 
 static void
-listen_socket_callback(const int listen_fd, const short events, void *const arg) {
-  fprintf(stderr, "[DEBUG] [listen_socket_callback] %d %d %p\n", listen_fd, events, arg);
+on_accept(const int listen_fd, const short events, void *const arg) {
+  DEBUG("on_accept", "begin %d %d %p\n", listen_fd, events, arg);
 
   // Ensure we have a read event.
   if (!(events & EV_READ)) {
-    fprintf(stderr, "[ERROR] [listen_socket_callback] Received unexpected event %u\n", events);
+    ERROR("on_accept", "Received unexpected event %u\n", events);
     return;
   }
 
@@ -367,12 +372,12 @@ listen_socket_callback(const int listen_fd, const short events, void *const arg)
     const int in_fd = accept(listen_fd, (struct sockaddr *)&in_addr, &in_addr_nbytes);
     if (in_fd == -1) {
       if (errno != EWOULDBLOCK && errno != EAGAIN) {
-        perror("Failed to read from main listening socket");
+        WARNING("on_accept", "Failed to read from main listening socket: %s", strerror(errno));
       }
       break;
     }
 
-    fprintf(stderr, "[INFO] [listen_socket_callback] Accepted child connection on fd %d\n", in_fd);
+    INFO("on_accept", "Accepted child connection on fd %d\n", in_fd);
     setup_connection(in_fd, &in_addr);
   }
 }
@@ -412,13 +417,13 @@ main(int argc, char **argv) {
   }
 
   // Create a libevent base object.
-  fprintf(stderr, "[INFO] libevent version: %s\n", event_get_version());
+  INFO("main", "libevent version: %s\n", event_get_version());
   server_loop = event_base_new();
   if (server_loop == NULL) {
-    fprintf(stderr, "[ERROR] Failed to create libevent event loop\n");
+    ERROR0("main", "Failed to create libevent event loop\n");
     return 1;
   }
-  fprintf(stderr, "[INFO] libevent is using %s for events.\n", event_base_get_method(server_loop));
+  INFO("main", "libevent is using %s for events.\n", event_base_get_method(server_loop));
 
   // Create the input socket address structure.
   struct sockaddr_in bind_addr;
@@ -461,17 +466,17 @@ main(int argc, char **argv) {
   }
 
   // Bind callbacks to the libevent loop for activity on the listening socket's file descriptor.
-  event_set(&connect_event, listen_fd, EV_READ | EV_PERSIST, listen_socket_callback, NULL);
+  event_set(&connect_event, listen_fd, EV_READ | EV_PERSIST, on_accept, server_loop);
   event_base_set(server_loop, &connect_event);
   if (event_add(&connect_event, NULL) == -1) {
-    fprintf(stderr, "[ERROR] Failed to schedule a socket listen into the main event loop\n");
+    ERROR0("main", "Failed to schedule a socket listen into the main event loop\n");
     return 1;
   }
 
   // Run the libevent event loop.
-  fprintf(stderr, "[INFO] Starting libevent event loop, listening on %s:%u\n", bind_host, bind_port);
+  INFO("main", "Starting libevent event loop, listening on %s:%u\n", bind_host, bind_port);
   if (event_base_dispatch(server_loop) == -1) {
-    fprintf(stderr, "[ERROR] Failed to run libevent event loop\n");
+    ERROR0("main", "Failed to run libevent event loop\n");
   }
 
   // Free up the connections.

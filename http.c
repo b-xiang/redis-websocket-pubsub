@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "lexer.h"
+#include "logging.h"
 
 /*
 https://tools.ietf.org/html/rfc2616#section-2.2
@@ -667,11 +668,8 @@ http_request_parse(struct http_request *const req, struct lexer *const lex) {
     return status;
   }
 
-  fprintf(stdout, "request uri=");
-  uri_pprint(stdout, &req->uri);
-  fprintf(stdout, "\n");
   for (const struct http_request_header *header = req->header; header != NULL; header = header->next) {
-    fprintf(stdout, "request header '%s' => '%s'\n", header->name, header->value);
+    DEBUG("http_request_parse", "Request header '%s' => '%s'\n", header->name, header->value);
   }
 
   // Ensure either the URI has a netloc, or the HOST header exists (or both).
@@ -682,7 +680,7 @@ http_request_parse(struct http_request *const req, struct lexer *const lex) {
   if (header != NULL) {
     if (req->host != NULL) {
       if (strcmp(header->value, req->host) != 0) {
-        fprintf(stderr, "URI netloc '%s' != HOST header '%s'\n", header->value, req->host);
+        INFO("http_request_parse", "URI netloc '%s' != HOST header '%s'. Aborting connection.\n", header->value, req->host);
         return STATUS_BAD;
       }
     }
@@ -691,7 +689,7 @@ http_request_parse(struct http_request *const req, struct lexer *const lex) {
     }
   }
   if (req->host == NULL) {
-    fprintf(stderr, "Request has no host information.\n");
+    INFO0("http_request_parse", "Request has no host information. Aborting connection.\n");
     return STATUS_BAD;
   }
 
