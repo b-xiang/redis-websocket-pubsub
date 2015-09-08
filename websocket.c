@@ -222,6 +222,7 @@ websocket_accept_http_request(struct websocket *const ws, struct http_response *
   if (ws->ping_event != NULL && event_add(ws->ping_event, &PING_INTERVAL) == -1) {
     WARNING0("websocket_accept_http_request", "`event_add` for ping_event failed.\n");
     event_del(ws->ping_event);
+    event_free(ws->ping_event);
     ws->ping_event = NULL;
   }
 
@@ -482,6 +483,7 @@ websocket_destroy(struct websocket *const ws) {
 
   if (ws->ping_event != NULL) {
     event_del(ws->ping_event);
+    event_free(ws->ping_event);
   }
   if (ws->out != NULL) {
     evbuffer_free(ws->out);
