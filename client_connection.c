@@ -95,7 +95,7 @@ on_read_websocket(struct client_connection *const client, const uint8_t *const b
   if (status != STATUS_OK) {
     WARNING("on_read_websocket", "websocket_consume failed. status=%d\n", status);
   }
-  else if (client->ws->in_state == WS_CLOSED) {
+  if (client->ws->in_state == WS_CLOSED) {
     client_connection_destroy(client);
   }
 }
