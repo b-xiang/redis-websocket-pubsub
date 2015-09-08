@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <inttypes.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <strings.h>
 #include <unistd.h>
@@ -17,6 +18,7 @@
 #include <openssl/sha.h>
 
 #include "base64.h"
+#include "client_connection.h"
 #include "compat_endian.h"
 #include "http.h"
 #include "logging.h"
@@ -25,6 +27,82 @@
 static const char *const SEC_WEBSOCKET_KEY_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 static const uint64_t MAX_PAYLOAD_LENGTH = 16 * 1024 * 1024;  // 16MB.
+static const struct timeval PING_INTERVAL = {.tv_sec = 30, .tv_usec = 0};
+
+
+// ================================================================================================
+// Sending data across the WebSocket.
+// ================================================================================================
+static enum status
+send_frame(struct websocket *const ws, const enum websocket_opcode opcode, struct evbuffer *const payload) {
+  // Write the first two header bytes of the frame.
+  uint8_t prefix[2];
+  const uint64_t nbytes = evbuffer_get_length(payload);
+  if (nbytes > UINT16_MAX) {
+    prefix[1] = 127;
+  }
+  else if (nbytes > 125) {
+    prefix[1] = 126;
+  }
+  else {
+    prefix[1] = nbytes;
+  }
+  prefix[0] = 0x80 | ((uint8_t)opcode);
+  evbuffer_add(ws->out, &prefix[0], 2);
+
+  // Write an extended payload length if it's needed.
+  if (nbytes > UINT16_MAX) {
+    uint64_t length = htobe64(nbytes);
+    evbuffer_add(ws->out, &length, 8);
+  }
+  else if (nbytes > 125) {
+    uint16_t length = htobe16(nbytes);
+    evbuffer_add(ws->out, &length, 2);
+  }
+
+  // Write the unmasked application data.
+  evbuffer_add_buffer(ws->out, payload);
+
+  // Flush the output buffer.
+  return websocket_flush_output(ws);
+}
+
+
+static enum status
+send_ping(struct websocket *const ws, struct evbuffer *const payload) {
+  return send_frame(ws, WS_OPCODE_PING, payload);
+}
+
+
+static enum status
+send_pong(struct websocket *const ws, struct evbuffer *const payload) {
+  // "A Pong frame sent in response to a Ping frame must have identical "Application data" as
+  // found in the message body of the Ping frame being replied to."
+  return send_frame(ws, WS_OPCODE_PONG, payload);
+}
+
+
+
+// ================================================================================================
+// libevent callbacks
+// ================================================================================================
+static void
+on_timeout_sendping(const evutil_socket_t fd, const short events, void *const arg) {
+  struct websocket *const ws = (struct websocket *)arg;
+  DEBUG("on_timeout_sendping", "fd=%d ws=%p events=%d\n", fd, ws, events);
+
+  // Don't send a PING control frame while if the WebSocket isn't established.
+  if (ws->in_state == WS_NEEDS_HTTP_UPGRADE || ws->in_state == WS_CLOSED) {
+    return;
+  }
+
+  // Drain the ping frame buffer and update its content for the next PING controlframe.
+  evbuffer_drain(ws->ping_frame, evbuffer_get_length(ws->ping_frame));
+  evbuffer_add_printf(ws->ping_frame, "%u", ws->ping_count++);
+
+  send_ping(ws, ws->ping_frame);
+}
+
 
 
 static enum status
@@ -66,25 +144,25 @@ websocket_accept_http_request(struct websocket *const ws, struct http_response *
   }
 
   // Ensure we have an `Upgrade` header with the case-insensitive value `websocket`.
-  header = http_request_find_header(req, "UPGRADE");
+  header = http_request_find_header(req, "Upgrade");
   if (header == NULL || strcasecmp("websocket", header->value) != 0) {
     return websocket_accept_http_request_reject(response, 400);
   }
 
   // Ensure we have a `Connection` header with the case-insensitive value `Upgrade`.
-  header = http_request_find_header(req, "CONNECTION");
+  header = http_request_find_header(req, "Connection");
   if (header == NULL || strcasecmp("upgrade", header->value) != 0) {
     return websocket_accept_http_request_reject(response, 400);
   }
 
   // Look for the `Origin` HTTP header in the request.
-  header = http_request_find_header(req, "ORIGIN");
+  header = http_request_find_header(req, "Origin");
   if (header == NULL) {
     return websocket_accept_http_request_reject(response, 403);
   }
 
   // Ensure we have a `Sec-WebSocket-Version` header with a value of `13`.
-  header = http_request_find_header(req, "SEC-WEBSOCKET-VERSION");
+  header = http_request_find_header(req, "Sec-WebSocket-Version");
   if (header == NULL || strcmp("13", header->value) != 0) {
     status = websocket_accept_http_request_reject(response, 400);
     if (status == STATUS_OK) {
@@ -94,7 +172,7 @@ websocket_accept_http_request(struct websocket *const ws, struct http_response *
   }
 
   // Look for the `Sec-WebSocket-Key` HTTP header in the request.
-  header = http_request_find_header(req, "SEC-WEBSOCKET-KEY");
+  header = http_request_find_header(req, "Sec-WebSocket-Key");
   if (header == NULL) {
     return websocket_accept_http_request_reject(response, 400);
   }
@@ -139,57 +217,22 @@ websocket_accept_http_request(struct websocket *const ws, struct http_response *
 
   // The connection can now be upgraded to a websocket connection.
   ws->in_state = WS_NEEDS_INITIAL;
-  bufferevent_setwatermark(ws->bev, EV_READ, 2, 2);
+  bufferevent_setwatermark(ws->client->bev, EV_READ, 2, 2);
+
+  // Setup a periodic PING event.
+  ws->ping_event = event_new(ws->client->event_loop, ws->client->fd, EV_PERSIST, &on_timeout_sendping, ws);
+  if (ws->ping_event != NULL && event_add(ws->ping_event, &PING_INTERVAL) == -1) {
+    WARNING0("websocket_accept_http_request", "`event_add` for ping_event failed.\n");
+    event_del(ws->ping_event);
+    ws->ping_event = NULL;
+  }
 
   return STATUS_OK;
 }
 
 
-static enum status
-websocket_send_frame(struct websocket *const ws, const enum websocket_opcode opcode, struct evbuffer *const payload) {
-  // Write the first two header bytes of the frame.
-  uint8_t prefix[2];
-  const uint64_t nbytes = evbuffer_get_length(payload);
-  if (nbytes > UINT16_MAX) {
-    prefix[1] = 127;
-  }
-  else if (nbytes > 125) {
-    prefix[1] = 126;
-  }
-  else {
-    prefix[1] = nbytes;
-  }
-  prefix[0] = 0x80 | ((uint8_t)opcode);
-  evbuffer_add(ws->out, &prefix[0], 2);
-
-  // Write an extended payload length if it's needed.
-  if (nbytes > UINT16_MAX) {
-    uint64_t length = htobe64(nbytes);
-    evbuffer_add(ws->out, &length, 8);
-  }
-  else if (nbytes > 125) {
-    uint16_t length = htobe16(nbytes);
-    evbuffer_add(ws->out, &length, 2);
-  }
-
-  // Write the unmasked application data.
-  evbuffer_add_buffer(ws->out, ws->in_frame);
-
-  // Flush the output buffer.
-  return websocket_flush_output(ws);
-}
-
-
-static enum status
-websocket_send_pong(struct websocket *const ws) {
-  // "A Pong frame sent in response to a Ping frame must have identical "Application data" as
-  // found in the message body of the Ping frame being replied to."
-  return websocket_send_frame(ws, WS_OPCODE_PONG, ws->in_frame);
-}
-
-
 static void
-websocket_consume_needs_initial(struct websocket *const ws, const uint8_t *const bytes, const size_t nbytes) {
+consume_needs_initial(struct websocket *const ws, const uint8_t *const bytes, const size_t nbytes) {
   assert(nbytes == 2);
   ws->in_is_final = (bytes[0] >> 7) & 0x01;
   ws->in_reserved = (bytes[0] >> 4) & 0x07;
@@ -199,7 +242,7 @@ websocket_consume_needs_initial(struct websocket *const ws, const uint8_t *const
 
   // Validate the reserved bits and the masking flag.
   // "MUST be 0 unless an extension is negotiated that defines meanings for non-zero values."
-  DEBUG("websocket_consume_needs_initial", "Received new frame header fin=%u reserved=%u opcode=%u is_masked=%u, length=%" PRIu64 "\n", ws->in_is_final, ws->in_reserved, ws->in_opcode, ws->in_is_masked, ws->in_length);
+  DEBUG("consume_needs_initial", "Received new frame header fin=%u reserved=%u opcode=%u is_masked=%u, length=%" PRIu64 "\n", ws->in_is_final, ws->in_reserved, ws->in_opcode, ws->in_is_masked, ws->in_length);
   if (ws->in_reserved != 0) {
     ws->in_state = WS_CLOSED;
     return;
@@ -213,21 +256,21 @@ websocket_consume_needs_initial(struct websocket *const ws, const uint8_t *const
   // Change state depending on how many more bytes of length data we need to read in.
   if (ws->in_length == 126) {
     ws->in_state = WS_NEEDS_LENGTH_16;
-    bufferevent_setwatermark(ws->bev, EV_READ, 2, 2);
+    bufferevent_setwatermark(ws->client->bev, EV_READ, 2, 2);
   }
   else if (ws->in_length == 127) {
     ws->in_state = WS_NEEDS_LENGTH_64;
-    bufferevent_setwatermark(ws->bev, EV_READ, 8, 8);
+    bufferevent_setwatermark(ws->client->bev, EV_READ, 8, 8);
   }
   else {
     ws->in_state = WS_NEEDS_MASKING_KEY;
-    bufferevent_setwatermark(ws->bev, EV_READ, 4, 4);
+    bufferevent_setwatermark(ws->client->bev, EV_READ, 4, 4);
   }
 }
 
 
 static void
-websocket_consume_needs_length_16(struct websocket *const ws, const uint8_t *const bytes, const size_t nbytes) {
+consume_needs_length_16(struct websocket *const ws, const uint8_t *const bytes, const size_t nbytes) {
   // Update our length and fail the connection if the payload size is too large.
   assert(nbytes == 2);
   ws->in_length = ntohs(*((uint16_t *)bytes));
@@ -238,12 +281,12 @@ websocket_consume_needs_length_16(struct websocket *const ws, const uint8_t *con
 
   // Update our state.
   ws->in_state = WS_NEEDS_MASKING_KEY;
-  bufferevent_setwatermark(ws->bev, EV_READ, 4, 4);
+  bufferevent_setwatermark(ws->client->bev, EV_READ, 4, 4);
 }
 
 
 static void
-websocket_consume_needs_length_64(struct websocket *const ws, const uint8_t *const bytes, const size_t nbytes) {
+consume_needs_length_64(struct websocket *const ws, const uint8_t *const bytes, const size_t nbytes) {
   assert(nbytes == 8);
   // Update our length and fail the connection if the payload size is too large.
   ws->in_length = be64toh(*((uint64_t *)bytes));
@@ -254,24 +297,24 @@ websocket_consume_needs_length_64(struct websocket *const ws, const uint8_t *con
 
   // Update our state.
   ws->in_state = WS_NEEDS_MASKING_KEY;
-  bufferevent_setwatermark(ws->bev, EV_READ, 4, 4);
+  bufferevent_setwatermark(ws->client->bev, EV_READ, 4, 4);
 }
 
 
 static void
-websocket_consume_needs_masking_key(struct websocket *const ws, const uint8_t *const bytes, const size_t nbytes) {
+consume_needs_masking_key(struct websocket *const ws, const uint8_t *const bytes, const size_t nbytes) {
   assert(nbytes == 4);
   // Keep the masking key in network byte order as the de-masking algorithm requires network byte order.
   ws->in_masking_key = *((uint32_t *)bytes);
 
   // Update our state.
   ws->in_state = WS_NEEDS_PAYLOAD;
-  bufferevent_setwatermark(ws->bev, EV_READ, ws->in_length, ws->in_length);
+  bufferevent_setwatermark(ws->client->bev, EV_READ, ws->in_length, ws->in_length);
 }
 
 
 static void
-websocket_consume_needs_payload(struct websocket *const ws, const uint8_t *const bytes, const size_t nbytes) {
+consume_needs_payload(struct websocket *const ws, const uint8_t *const bytes, const size_t nbytes) {
   const uint8_t *upto;
   uint8_t quad[4];
   size_t slice, nbytes_remaining;
@@ -296,71 +339,71 @@ websocket_consume_needs_payload(struct websocket *const ws, const uint8_t *const
   // Update our state.
   switch (ws->in_opcode) {
   case WS_OPCODE_CONTINUATION_FRAME:
-    DEBUG("websocket_consume_needs_payload", "Received CONTINUATION frame on fd=%d. is_final=%d\n", ws->fd, ws->in_is_final);
+    DEBUG("consume_needs_payload", "Received CONTINUATION frame on fd=%d. is_final=%d\n", ws->client->fd, ws->in_is_final);
     // Ensure we have an existing message to continue on from.
     // TODO
 
     // Reset our state to waiting for a new frame.
     ws->in_state = WS_NEEDS_INITIAL;
-    bufferevent_setwatermark(ws->bev, EV_READ, 2, 2);
+    bufferevent_setwatermark(ws->client->bev, EV_READ, 2, 2);
     break;
 
   case WS_OPCODE_TEXT_FRAME:
-    DEBUG("websocket_consume_needs_payload", "Received TEXT frame on fd=%d. is_final=%d\n", ws->fd, ws->in_is_final);
+    DEBUG("consume_needs_payload", "Received TEXT frame on fd=%d. is_final=%d\n", ws->client->fd, ws->in_is_final);
     nbytes_remaining = evbuffer_get_length(ws->in_frame);
-    DEBUG("websocket_consume_needs_payload", "evbuffer_get_length=>%zu\n", nbytes_remaining);
+    DEBUG("consume_needs_payload", "evbuffer_get_length=>%zu\n", nbytes_remaining);
     uint8_t *text = malloc(nbytes_remaining + 1);
     assert(text != NULL);
     evbuffer_remove(ws->in_frame, text, nbytes_remaining);
     text[nbytes_remaining] = '\0';
-    DEBUG("websocket_consume_needs_payload", "text='%s'\n", (const char *)text);
+    DEBUG("consume_needs_payload", "text='%s'\n", (const char *)text);
     free(text);
     // Ensure we don't have an existing message to continue on from.
     // TODO
 
     // Reset our state to waiting for a new frame.
     ws->in_state = WS_NEEDS_INITIAL;
-    bufferevent_setwatermark(ws->bev, EV_READ, 2, 2);
+    bufferevent_setwatermark(ws->client->bev, EV_READ, 2, 2);
     break;
 
   case WS_OPCODE_BINARY_FRAME:
-    DEBUG("websocket_consume_needs_payload", "Received BINARY frame on fd=%d. is_final=%d\n", ws->fd, ws->in_is_final);
+    DEBUG("consume_needs_payload", "Received BINARY frame on fd=%d. is_final=%d\n", ws->client->fd, ws->in_is_final);
     // Ensure we don't have an existing message to continue on from.
     // TODO
 
     // Reset our state to waiting for a new frame.
     ws->in_state = WS_NEEDS_INITIAL;
-    bufferevent_setwatermark(ws->bev, EV_READ, 2, 2);
+    bufferevent_setwatermark(ws->client->bev, EV_READ, 2, 2);
     break;
 
   case WS_OPCODE_CONNECTION_CLOSE:
-    DEBUG("websocket_consume_needs_payload", "Closing client on fd=%d due to CLOSE opcode.\n", ws->fd);
+    DEBUG("consume_needs_payload", "Closing client on fd=%d due to CLOSE opcode.\n", ws->client->fd);
     // Close the connection.
     ws->in_state = WS_CLOSED;
     break;
 
   case WS_OPCODE_PING:
-    DEBUG("websocket_consume_needs_payload", "Received PING from fd=%d. Sending PONG.\n", ws->fd);
+    DEBUG("consume_needs_payload", "Received PING from fd=%d. Sending PONG.\n", ws->client->fd);
     // "Upon receipt of a Ping frame, an endpoint MUST send a Pong frame in response, unless it
     // already received a Close frame. It SHOULD respond with Pong frame as soon as is practical."
-    websocket_send_pong(ws);
+    send_pong(ws, ws->in_frame);
 
     // Reset our state to waiting for a new frame.
     ws->in_state = WS_NEEDS_INITIAL;
-    bufferevent_setwatermark(ws->bev, EV_READ, 2, 2);
+    bufferevent_setwatermark(ws->client->bev, EV_READ, 2, 2);
     break;
 
   case WS_OPCODE_PONG:
-    DEBUG("websocket_consume_needs_payload", "Received PONG from fd=%d. Doing nothing.\n", ws->fd);
+    DEBUG("consume_needs_payload", "Received PONG from fd=%d. Doing nothing.\n", ws->client->fd);
     // Don't do anything in response to receiving a pong frame.
     // Reset our state to waiting for a new frame.
     ws->in_state = WS_NEEDS_INITIAL;
-    bufferevent_setwatermark(ws->bev, EV_READ, 2, 2);
+    bufferevent_setwatermark(ws->client->bev, EV_READ, 2, 2);
     break;
 
   default:
     // Close the connection since we received an unknown opcode.
-    ERROR("websocket_consume_needs_payload", "Unknown opcode %u\n", ws->in_opcode);
+    ERROR("consume_needs_payload", "Unknown opcode %u\n", ws->in_opcode);
     ws->in_state = WS_CLOSED;
     break;
   }
@@ -371,23 +414,23 @@ enum status
 websocket_consume(struct websocket *const ws, const uint8_t *const bytes, const size_t nbytes) {
   switch (ws->in_state) {
   case WS_NEEDS_INITIAL:
-    websocket_consume_needs_initial(ws, bytes, nbytes);
+    consume_needs_initial(ws, bytes, nbytes);
     break;
 
   case WS_NEEDS_LENGTH_16:
-    websocket_consume_needs_length_16(ws, bytes, nbytes);
+    consume_needs_length_16(ws, bytes, nbytes);
     break;
 
   case WS_NEEDS_LENGTH_64:
-    websocket_consume_needs_length_64(ws, bytes, nbytes);
+    consume_needs_length_64(ws, bytes, nbytes);
     break;
 
   case WS_NEEDS_MASKING_KEY:
-    websocket_consume_needs_masking_key(ws, bytes, nbytes);
+    consume_needs_masking_key(ws, bytes, nbytes);
     break;
 
   case WS_NEEDS_PAYLOAD:
-    websocket_consume_needs_payload(ws, bytes, nbytes);
+    consume_needs_payload(ws, bytes, nbytes);
     break;
 
   default:
@@ -401,22 +444,22 @@ websocket_consume(struct websocket *const ws, const uint8_t *const bytes, const 
 
 
 struct websocket *
-websocket_init(int fd, const struct sockaddr_in *const addr) {
+websocket_init(struct client_connection *const client) {
   struct websocket *const ws = malloc(sizeof(struct websocket));
   if (ws == NULL) {
     return NULL;
   }
 
   memset(ws, 0, sizeof(struct websocket));
-  ws->fd = fd;
-  ws->addr = *addr;
+  ws->client = client;
   ws->out = evbuffer_new();
   ws->in_frame = evbuffer_new();
   ws->in_message = evbuffer_new();
   ws->in_state = WS_NEEDS_HTTP_UPGRADE;
+  ws->ping_frame = evbuffer_new();
 
   // Configure the buffers.
-  if (ws->out == NULL || ws->in_frame == NULL || ws->in_message == NULL) {
+  if (ws->out == NULL || ws->in_frame == NULL || ws->in_message == NULL || ws->ping_frame == NULL) {
     websocket_destroy(ws);
     return NULL;
   }
@@ -428,27 +471,24 @@ websocket_init(int fd, const struct sockaddr_in *const addr) {
 enum status
 websocket_destroy(struct websocket *const ws) {
   DEBUG("websocket_destroy", "ws=%p\n", ws);
-  int ret;
   if (ws == NULL) {
     return STATUS_EINVAL;
   }
 
+  if (ws->ping_event != NULL) {
+    event_del(ws->ping_event);
+  }
+  if (ws->out != NULL) {
+    evbuffer_free(ws->out);
+  }
   if (ws->in_frame != NULL) {
     evbuffer_free(ws->in_frame);
   }
   if (ws->in_message != NULL) {
     evbuffer_free(ws->in_message);
   }
-  if (ws->bev != NULL) {
-    bufferevent_free(ws->bev);
-  }
-  if (ws->out != NULL) {
-    evbuffer_free(ws->out);
-  }
-  if (ws->fd >= 0) {
-    websocket_shutdown(ws);
-    ret = close(ws->fd);
-    WARNING("websocket_destroy", "`close` on fd=%d failed: %s\n", ws->fd, strerror(errno));
+  if (ws->ping_frame != NULL) {
+    evbuffer_free(ws->ping_frame);
   }
   free(ws);
 
@@ -462,39 +502,10 @@ websocket_flush_output(struct websocket *const ws) {
     return STATUS_EINVAL;
   }
 
-  DEBUG("websocket_flush_output", "before length = %zu\n", evbuffer_get_length(ws->out));
-  if (bufferevent_write_buffer(ws->bev, ws->out) == -1) {
-    ERROR0("websocket_flush_output", "failed to flush output buffer (`bufferevent_write_buffer` failed)\n");
+  if (bufferevent_write_buffer(ws->client->bev, ws->out) == -1) {
     return STATUS_BAD;
   }
-  DEBUG("websocket_flush_output", "after length = %zu\n", evbuffer_get_length(ws->out));
-  if (bufferevent_write(ws->bev, "Hello, World!\n", 14) == -1) {
-    ERROR0("websocket_flush_output", "failed to flush output buffer (`bufferevent_write` failed)\n");
-    return STATUS_BAD;
-  }
-  DEBUG("websocket_flush_output", "after length = %zu\n", evbuffer_get_length(ws->out));
-
-  int ret = bufferevent_flush(ws->bev, EV_WRITE, BEV_FINISHED);
-  DEBUG("websocket_flush_output", "buffeevent_flush = %d\n", ret);
-
-  return STATUS_OK;
-}
-
-
-enum status
-websocket_shutdown(struct websocket *const ws) {
-  DEBUG("websocket_shutdown", "ws=%p\n", ws);
-  int ret;
-  if (ws == NULL) {
-    return STATUS_EINVAL;
-  }
-
-  if (!ws->is_shutdown) {
-    ret = shutdown(ws->fd, SHUT_RDWR);
-    if (ret != 0) {
-      WARNING("websocket_shutdown", "`shutdown` on fd=%d failed: %s\n", ws->fd, strerror(errno));
-    }
-  }
+  bufferevent_flush(ws->client->bev, EV_WRITE, BEV_FINISHED);
 
   return STATUS_OK;
 }

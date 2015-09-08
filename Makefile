@@ -10,6 +10,6 @@ clean:
 	-rm -f *.o test-pubsub
 
 test-base64: test-base64.o base64.o logging.o
-test-http: test-http.o base64.o http.o lexer.o logging.o uri.o websocket.o
-test-pubsub: test-pubsub.o base64.o http.o lexer.o logging.o uri.o websocket.o
-server: base64.o http.o lexer.o logging.o server.o uri.o websocket.o
+test-http: test-http.o base64.o client_connection.o http.o lexer.o logging.o uri.o websocket.o
+test-pubsub: test-pubsub.o base64.o client_connection.o http.o lexer.o logging.o uri.o websocket.o
+server: base64.o client_connection.o http.o lexer.o logging.o server.o uri.o websocket.o
