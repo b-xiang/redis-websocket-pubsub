@@ -9,6 +9,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+
+#include <event.h>
+#include <event2/event.h>
 
 #include "lexer.h"
 #include "logging.h"
@@ -333,6 +337,49 @@ const char *const HTTP_METHOD_TRACE = "TRACE";
 const char *const HTTP_REQUEST_URI_ASTERISK = "*";
 
 
+static const char *
+get_status_string(const unsigned int status_code) {
+  switch (status_code) {
+  case 100: return "Continue";
+  case 101: return "Switching Protocols";
+  case 200: return "OK";
+  case 201: return "Created";
+  case 202: return "Accepted";
+  case 203: return "Non-Authoritative Information";
+  case 204: return "No Content";
+  case 205: return "Reset Content";
+  case 300: return "Multiple Choices";
+  case 301: return "Moved Permanently";
+  case 302: return "Found";
+  case 303: return "See Other";
+  case 305: return "Use Proxy";
+  case 307: return "Temporary Redirect";
+  case 400: return "Bad Request";
+  case 402: return "Payment Required";
+  case 403: return "Forbidden";
+  case 404: return "Not Found";
+  case 405: return "Method Not Allowed";
+  case 406: return "Not Acceptable";
+  case 408: return "Request Timeout";
+  case 409: return "Conflict";
+  case 410: return "Gone";
+  case 411: return "Length Required";
+  case 413: return "Payload Too Large";
+  case 414: return "URI Too Long";
+  case 415: return "Unsupported Media Type";
+  case 417: return "Expectation Failed";
+  case 426: return "Upgrade Required";
+  case 500: return "Internal Server Error";
+  case 501: return "Not Implemented";
+  case 502: return "Bad Gateway";
+  case 503: return "Service Unavailable";
+  case 504: return "Gateway Timeout";
+  case 505: return "HTTP Version Not Supported";
+  default: return "";
+  }
+}
+
+
 /**
  * HTTP-Version = "HTTP" "/" 1*DIGIT "." 1*DIGIT
  **/
@@ -607,6 +654,64 @@ parse_http_request(struct http_request *const req, struct lexer *const lex) {
 }
 
 
+static enum status
+http_header_add(struct http_header **header, const char *const name, const size_t name_nbytes, const char *const value, const size_t value_nbytes) {
+  char *name_copy = NULL, *value_copy = NULL;
+
+  if (header == NULL || name == NULL || value == NULL) {
+    return STATUS_EINVAL;
+  }
+
+  // Create a local copy of the name, converted to uppercase.
+  name_copy = malloc(name_nbytes + 1);
+  if (name_copy == NULL) {
+    goto fail;
+  }
+  memcpy(name_copy, name, name_nbytes);
+  name_copy[name_nbytes] = '\0';
+
+  // Create a local copy of the value.
+  value_copy = malloc(value_nbytes + 1);
+  if (value_copy == NULL) {
+    goto fail;
+  }
+  memcpy(value_copy, value, value_nbytes);
+  value_copy[value_nbytes] = '\0';
+
+  // See if a header with the name already exists.
+  struct http_header *h;
+  for (h = *header; h != NULL; h = h->next) {
+    if (strcasecmp(h->name, name_copy) == 0) {
+      break;
+    }
+  }
+
+  // Replace or create the header.
+  if (h == NULL) {
+    h = malloc(sizeof(struct http_header));
+    if (h == NULL) {
+      goto fail;
+    }
+    h->name = name_copy;
+    h->value = value_copy;
+    h->next = *header;
+    *header = h;
+  }
+  else {
+    free(name_copy);
+    free(h->value);
+    h->value = value_copy;
+  }
+
+  return STATUS_OK;
+
+fail:
+  free(name_copy);
+  free(value_copy);
+  return STATUS_ENOMEM;
+}
+
+
 // ================================================================================================
 // Public API for `http_request`.
 // ================================================================================================
@@ -638,8 +743,8 @@ http_request_destroy(struct http_request *const req) {
   enum status status = uri_destroy(&req->uri);
 
   // Destroy the headers.
-  for (struct http_request_header *header = req->header; header != NULL; ) {
-    struct http_request_header *const next = header->next;
+  for (struct http_header *header = req->header; header != NULL; ) {
+    struct http_header *const next = header->next;
     free(header->name);
     free(header->value);
     free(header);
@@ -658,7 +763,7 @@ http_request_destroy(struct http_request *const req) {
  **/
 enum status
 http_request_parse(struct http_request *const req, struct lexer *const lex) {
-  const struct http_request_header *header = NULL;
+  const struct http_header *header = NULL;
   if (req == NULL || lex == NULL) {
     return STATUS_EINVAL;
   }
@@ -668,7 +773,7 @@ http_request_parse(struct http_request *const req, struct lexer *const lex) {
     return status;
   }
 
-  for (const struct http_request_header *header = req->header; header != NULL; header = header->next) {
+  for (const struct http_header *header = req->header; header != NULL; header = header->next) {
     DEBUG("http_request_parse", "Request header '%s' => '%s'\n", header->name, header->value);
   }
 
@@ -676,7 +781,7 @@ http_request_parse(struct http_request *const req, struct lexer *const lex) {
   if (req->uri.netloc != NULL) {
     req->host = req->uri.netloc;
   }
-  header = http_request_find_header(req, "HOST");
+  header = http_request_find_header(req, "Host");
   if (header != NULL) {
     if (req->host != NULL) {
       if (strcmp(header->value, req->host) != 0) {
@@ -699,74 +804,126 @@ http_request_parse(struct http_request *const req, struct lexer *const lex) {
 
 enum status
 http_request_add_header(struct http_request *const req, const char *const name, const size_t name_nbytes, const char *const value, const size_t value_nbytes) {
-  char *name_copy = NULL, *value_copy = NULL;
-
-  if (req == NULL || name == NULL || value == NULL) {
-    return STATUS_EINVAL;
-  }
-
-  // Create a local copy of the name, converted to uppercase.
-  name_copy = malloc(name_nbytes + 1);
-  if (name_copy == NULL) {
-    goto fail;
-  }
-  for (size_t i = 0; i != name_nbytes; ++i) {
-    name_copy[i] = toupper(name[i]);
-  }
-  name_copy[name_nbytes] = '\0';
-
-  // Create a local copy of the value.
-  value_copy = malloc(value_nbytes + 1);
-  if (value_copy == NULL) {
-    goto fail;
-  }
-  memcpy(value_copy, value, value_nbytes);
-  value_copy[value_nbytes] = '\0';
-
-  // See if a header with the name already exists.
-  struct http_request_header *header;
-  for (header = req->header; header != NULL; header = header->next) {
-    if (strcmp(header->name, name_copy) == 0) {
-      break;
-    }
-  }
-
-  // Replace or create the header.
-  if (header == NULL) {
-    header = malloc(sizeof(struct http_request_header));
-    if (header == NULL) {
-      goto fail;
-    }
-    header->name = name_copy;
-    header->value = value_copy;
-    header->next = req->header;
-    req->header = header;
-  }
-  else {
-    free(name_copy);
-    free(header->value);
-    header->value = value_copy;
-  }
-
-  return STATUS_OK;
-
-fail:
-  free(name_copy);
-  free(value_copy);
-  return STATUS_ENOMEM;
+  return http_header_add(&req->header, name, name_nbytes, value, value_nbytes);
 }
 
 
-struct http_request_header *
-http_request_find_header(const struct http_request *const req, const char *const name_upper) {
-  if (req == NULL || name_upper == NULL) {
+struct http_header *
+http_request_find_header(const struct http_request *const req, const char *const name) {
+  if (req == NULL || name == NULL) {
     return NULL;
   }
 
-  for (struct http_request_header *header = req->header; header != NULL; header = header->next) {
-    if (strcmp(header->name, name_upper) == 0) {
+  for (struct http_header *header = req->header; header != NULL; header = header->next) {
+    if (strcasecmp(header->name, name) == 0) {
       return header;
     }
   }
+
   return NULL;
+}
+
+
+// ================================================================================================
+// Public API for `http_response`.
+// ================================================================================================
+struct http_response *
+http_response_init(void) {
+  struct http_response *const resp = malloc(sizeof(struct http_response));
+  if (resp == NULL) {
+    return NULL;
+  }
+
+  memset(resp, 0, sizeof(struct http_response));
+  return resp;
+}
+
+
+enum status
+http_response_destroy(struct http_response *const resp) {
+  if (resp == NULL) {
+    return STATUS_OK;
+  }
+
+  // Destroy the headers.
+  for (struct http_header *header = resp->header; header != NULL; ) {
+    struct http_header *const next = header->next;
+    free(header->name);
+    free(header->value);
+    free(header);
+    header = next;
+  }
+
+  // Destroy the response.
+  free((void *)resp->body);
+  free(resp);
+
+  return STATUS_OK;
+}
+
+
+enum status
+http_response_add_header(struct http_response *const response, const char *const name, const char *const value) {
+  return http_header_add(&response->header, name, strlen(name), value, strlen(value));
+}
+
+
+enum status
+http_response_add_header_n(struct http_response *const response, const char *const name, const size_t name_nbytes, const char *const value, const size_t value_nbytes) {
+  return http_header_add(&response->header, name, name_nbytes, value, value_nbytes);
+}
+
+
+enum status
+http_response_set_status_code(struct http_response *const response, const unsigned int status_code) {
+  if (response == NULL) {
+    return STATUS_EINVAL;
+  }
+
+  response->status_code = status_code;
+  return STATUS_OK;
+}
+
+
+enum status
+http_response_set_version(struct http_response *const response, const uint32_t version_major, const uint32_t version_minor) {
+  if (response == NULL) {
+    return STATUS_EINVAL;
+  }
+
+  response->version_major = version_major;
+  response->version_minor = version_minor;
+  return STATUS_OK;
+}
+
+
+enum status
+http_response_write_evbuffer(const struct http_response *const response, struct evbuffer *const out) {
+  enum status status = STATUS_OK;
+  const char *status_string;
+  const struct http_header *header;
+
+  if (response == NULL || out == NULL) {
+    return STATUS_EINVAL;
+  }
+
+  status_string = get_status_string(response->status_code);
+  if (evbuffer_add_printf(out, "HTTP/%u.%u %u %s\r\n", response->version_major, response->version_minor, response->status_code, status_string) == -1) {
+    status = STATUS_BAD;
+  }
+  for (header = response->header; header != NULL; header = header->next) {
+    if (evbuffer_add_printf(out, "%s: %s\r\n", header->name, header->value) == -1) {
+      status = STATUS_BAD;
+    }
+  }
+  if (evbuffer_add(out, "\r\n", 2) == -1) {
+    status = STATUS_BAD;
+  }
+  if (response->body != NULL) {
+    if (evbuffer_add(out, response->body, strlen(response->body)) == -1) {
+      status = STATUS_BAD;
+    }
+  }
+
+  return status;
 }

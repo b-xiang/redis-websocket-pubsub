@@ -28,94 +28,75 @@ static const uint64_t MAX_PAYLOAD_LENGTH = 16 * 1024 * 1024;  // 16MB.
 
 
 static enum status
-http_response_write_status_line(const unsigned int status_code, const char *const reason, struct evbuffer *const out) {
-  if (reason == NULL) {
-    return STATUS_EINVAL;
-  }
-
-  if (evbuffer_add_printf(out, "HTTP/1.1 %u %s\r\n", status_code, reason) == -1) {
-    ERROR0("http_response_write_status_line", "`evbuffer_add_printf` failed\n");
-    return STATUS_BAD;
-  }
-
-  return STATUS_OK;
-}
-
-
-static enum status
-http_response_write_no_body(const unsigned int status_code, const char *const reason, struct evbuffer *const out) {
+websocket_accept_http_request_reject(struct http_response *const response, const unsigned int status_code) {
   enum status status;
 
-  status = http_response_write_status_line(status_code, reason, out);
+  status = http_response_set_status_code(response, status_code);
   if (status != STATUS_OK) {
     return status;
   }
-  if (evbuffer_add_printf(out, "Connection: Close\r\n\r\n") == -1) {
-    ERROR0("http_response_write_no_body", "`evbuffer_add_printf` failed\n");
-    return STATUS_BAD;
+  status = http_response_add_header(response, "Connection", "Close");
+  if (status != STATUS_OK) {
+    return status;
   }
 
-  return STATUS_OK;
+  return status;
 }
 
 
 enum status
-websocket_accept_http_request(struct websocket *const ws, const struct http_request *const req) {
+websocket_accept_http_request(struct websocket *const ws, struct http_response *const response, const struct http_request *const req) {
   struct base64_buffer sha1_base64_buffer;
-  enum status base64_status;
-  const struct http_request_header *header = NULL;
+  enum status status;
+  const struct http_header *header = NULL;
   unsigned char *sha1_input_buffer = NULL;
   unsigned char sha1_output_buffer[SHA_DIGEST_LENGTH];
 
-  if (req == NULL) {
+  if (ws == NULL || response == NULL || req == NULL) {
     return STATUS_EINVAL;
   }
 
   // Ensure we're talking HTTP/1.1 or higher.
   if (req->version_major != 1 || req->version_minor < 1) {
-    http_response_write_no_body(405, "HTTP Version not supported", ws->out);
-    return STATUS_OK;
+    return websocket_accept_http_request_reject(response, 505);
+  }
+  status = http_response_set_version(response, req->version_major, req->version_minor);
+  if (status != STATUS_OK) {
+    return status;
   }
 
   // Ensure we have an `Upgrade` header with the case-insensitive value `websocket`.
   header = http_request_find_header(req, "UPGRADE");
   if (header == NULL || strcasecmp("websocket", header->value) != 0) {
-    http_response_write_no_body(400, "Bad Request", ws->out);
-    return STATUS_OK;
+    return websocket_accept_http_request_reject(response, 400);
   }
 
   // Ensure we have a `Connection` header with the case-insensitive value `Upgrade`.
   header = http_request_find_header(req, "CONNECTION");
   if (header == NULL || strcasecmp("upgrade", header->value) != 0) {
-    http_response_write_no_body(400, "Bad Request", ws->out);
-    return STATUS_OK;
+    return websocket_accept_http_request_reject(response, 400);
   }
 
   // Look for the `Origin` HTTP header in the request.
   header = http_request_find_header(req, "ORIGIN");
   if (header == NULL) {
-    http_response_write_no_body(403, "Forbidden", ws->out);
-    return STATUS_OK;
+    return websocket_accept_http_request_reject(response, 403);
   }
 
   // Ensure we have a `Sec-WebSocket-Version` header with a value of `13`.
   header = http_request_find_header(req, "SEC-WEBSOCKET-VERSION");
   if (header == NULL || strcmp("13", header->value) != 0) {
-    DEBUG("websocket_accept_http_request", "Sec-Websocket-Version out length = %zu\n", evbuffer_get_length(ws->out));
-    http_response_write_no_body(400, "Bad Request", ws->out);
-    DEBUG("websocket_accept_http_request", "Sec-Websocket-Version out length = %zu\n", evbuffer_get_length(ws->out));
-    if (evbuffer_add_printf(ws->out, "Sec-WebSocket-Version: 13\r\n") == -1) {
-      return STATUS_BAD;
+    status = websocket_accept_http_request_reject(response, 400);
+    if (status == STATUS_OK) {
+      status = http_response_add_header(response, "Sec-WebSocket-Version", "13");
     }
-    DEBUG("websocket_accept_http_request", "Sec-Websocket-Version out length = %zu\n", evbuffer_get_length(ws->out));
-    return STATUS_OK;
+    return status;
   }
 
   // Look for the `Sec-WebSocket-Key` HTTP header in the request.
   header = http_request_find_header(req, "SEC-WEBSOCKET-KEY");
   if (header == NULL) {
-    http_response_write_no_body(400, "Bad Request", ws->out);
-    return STATUS_OK;
+    return websocket_accept_http_request_reject(response, 400);
   }
 
   // Compute the SHA1 hash of the concatenation of the `Sec-WebSocket-Key` header and the hard-coded GUID.
@@ -134,38 +115,27 @@ websocket_accept_http_request(struct websocket *const ws, const struct http_requ
   free(sha1_input_buffer);
 
   // Convert the SHA1 hash bytes into its base64 representation.
-  base64_status = base64_init(&sha1_base64_buffer);
-  if (base64_status != STATUS_OK) {
-    return base64_status;
+  status = base64_init(&sha1_base64_buffer);
+  if (status != STATUS_OK) {
+    return status;
   }
 
-  base64_status = base64_encode((const char *)sha1_output_buffer, SHA_DIGEST_LENGTH, &sha1_base64_buffer);
-  if (base64_status != STATUS_OK) {
-    return base64_status;
+  status = base64_encode((const char *)sha1_output_buffer, SHA_DIGEST_LENGTH, &sha1_base64_buffer);
+  if (status != STATUS_OK) {
+    return status;
   }
 
   // Send the server's opening handshake to accept the incomming connection.
   // https://tools.ietf.org/html/rfc6455#section-4.2.2
-  if (evbuffer_add_printf(ws->out, "HTTP/1.1 101 Switching Protocols\r\n") == -1) {
-    return STATUS_BAD;
-  }
-  if (evbuffer_add_printf(ws->out, "Upgrade: websocket\r\n") == -1) {
-    return STATUS_BAD;
-  }
-  if (evbuffer_add_printf(ws->out, "Connection: Upgrade\r\n") == -1) {
-    return STATUS_BAD;
-  }
-  if (evbuffer_add_printf(ws->out, "Sec-WebSocket-Accept: ") == -1) {
-    return STATUS_BAD;
-  }
-  if (evbuffer_add(ws->out, sha1_base64_buffer.data, sha1_base64_buffer.used) == -1) {
-    return STATUS_BAD;
-  }
-  if (evbuffer_add_printf(ws->out, "\r\n\r\n") == -1) {
-    return STATUS_BAD;
-  }
-
+  http_response_set_status_code(response, 101);
+  http_response_add_header(response, "Connection", "Upgrade");
+  http_response_add_header(response, "Upgrade", "websocket");
+  http_response_add_header_n(response, "Sec-WebSocket-Accept", 20, sha1_base64_buffer.data, sha1_base64_buffer.used);
   base64_destroy(&sha1_base64_buffer);
+
+  if (status != STATUS_OK) {
+    return status;
+  }
 
   // The connection can now be upgraded to a websocket connection.
   ws->in_state = WS_NEEDS_INITIAL;

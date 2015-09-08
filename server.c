@@ -24,10 +24,13 @@
 #define SA_RESTART   0x10000000 /* Restart syscall on signal return.  */
 #endif
 
+
 struct client_connection {
+  bool needs_shutdown;
+  struct http_request *request;
+  struct http_response *response;
   struct websocket *ws;
   struct client_connection *next;
-  bool needs_shutdown;
 };
 
 static struct client_connection *client_connection_create(int fd, const struct sockaddr_in *addr);
@@ -178,7 +181,6 @@ client_connection_onerror(struct bufferevent *const bev, const short events, voi
 static void
 client_connection_onread_initial(struct client_connection *const client, const uint8_t *const buf, const size_t nbytes) {
   struct lexer lex;
-  struct http_request *req = NULL;
   enum status status;
 
   // Initialise our required data structures.
@@ -186,36 +188,34 @@ client_connection_onread_initial(struct client_connection *const client, const u
     ERROR0("client_connection_onread_initial", "failed to construct lexer instance (`lexer_init` failed)\n");
     return;
   }
-  if ((req = http_request_init()) == NULL) {
-    WARNING0("client_connection_onread_initial", "failed to construct http_request instance\n");
-    lexer_destroy(&lex);
-    return;
-  }
 
   // Try and parse the HTTP request.
-  if ((status = http_request_parse(req, &lex)) != STATUS_OK) {
+  if ((status = http_request_parse(client->request, &lex)) != STATUS_OK) {
     WARNING("client_connection_onread_initial", "failed to parse the HTTP request. status=%d\n", status);
-    http_request_destroy(req);
     lexer_destroy(&lex);
     return;
   }
 
   // TODO ensure that the host matches what we think we're serving.
-  DEBUG("client_connection_onread_initial", "Request is for host '%s'\n", req->host);
+  DEBUG("client_connection_onread_initial", "Request is for host '%s'\n", client->request->host);
 
   // See if the HTTP request is accepted by the websocket protocol.
-  status = websocket_accept_http_request(client->ws, req);
+  status = websocket_accept_http_request(client->ws, client->response, client->request);
   if (status != STATUS_OK) {
     WARNING("client_connection_onread_initial", "websocket_accept_http_request failed. status=%d\n", status);
   }
 
   // Flush the output buffer.
-  websocket_flush_output(client->ws);
+  status = http_response_write_evbuffer(client->response, client->ws->out);
+  if (status != STATUS_OK) {
+    WARNING("client_connection_onread_initial", "http_response_write_evbuffer failed. status=%d\n", status);
+  }
+  status = websocket_flush_output(client->ws);
+  if (status != STATUS_OK) {
+    WARNING("client_connection_onread_initial", "websocket_flush_output failed. status=%d\n", status);
+  }
 
   // Free up resources.
-  if ((status = http_request_destroy(req)) != STATUS_OK) {
-    ERROR("client_connection_onread_initial", "failed to destroy HTTP request instance. status=%d\n", status);
-  }
   if (!lexer_destroy(&lex)) {
     ERROR0("client_connection_onread_initial", "failed to destroy lexer instance (`lexer_destroy` failed)\n");
   }
@@ -275,12 +275,6 @@ client_connection_onwrite(struct bufferevent *const bev, void *const arg) {
 
 static struct client_connection *
 client_connection_create(const int fd, const struct sockaddr_in *const addr) {
-  // Construct the websocket connection object.
-  struct websocket *const ws = websocket_init(fd, addr);
-  if (ws == NULL) {
-    return NULL;
-  }
-
   // Construct the client connection object.
   struct client_connection *const client = malloc(sizeof(struct client_connection));
   if (client == NULL) {
@@ -290,33 +284,60 @@ client_connection_create(const int fd, const struct sockaddr_in *const addr) {
 
   // Construct the client_connection instance and insert it into the list of all clients.
   memset(client, 0, sizeof(struct client_connection));
-  client->ws = ws;
-  client->next = clients;
   client->needs_shutdown = false;
-  clients = client;
+  client->request = http_request_init();
+  client->response = http_response_init();
+  client->ws = websocket_init(fd, addr);
+
+  // Construct the websocket connection object.
+  if (client->request == NULL || client->response == NULL || client->ws == NULL) {
+    goto fail;
+  }
 
   // Configure the buffered I/O event.
-  ws->bev = bufferevent_socket_new(server_loop, fd, BEV_OPT_CLOSE_ON_FREE);
-  if (ws->bev == NULL) {
+  struct bufferevent *const bev = bufferevent_socket_new(server_loop, fd, BEV_OPT_CLOSE_ON_FREE);
+  if (bev == NULL) {
     ERROR0("client_connection_create", "`bufferevent_socket_new` failed.\n");
-    client_connection_destroy(client);
-    return NULL;
+    goto fail;
   }
-  bufferevent_setcb(ws->bev, &client_connection_onread, &client_connection_onwrite, &client_connection_onerror, client);
-  bufferevent_settimeout(ws->bev, 60, 0);
-  if (bufferevent_enable(ws->bev, EV_READ | EV_WRITE) == -1) {
-    ERROR("client_connection_create", "failed to enable the client read bufferevent (`bufferevent_enable` failed) on fd=%d\n", ws->fd);
-    client_connection_destroy(client);
-    return NULL;
-  }
+  bufferevent_setcb(bev, &client_connection_onread, &client_connection_onwrite, &client_connection_onerror, client);
+  bufferevent_settimeout(bev, 60, 0);
+  bufferevent_enable(bev, EV_READ | EV_WRITE);
+  client->ws->bev = bev;
+
+  // Insert the client into the list of all connected clients.
+  client->next = clients;
+  clients = client;
 
   return client;
+
+fail:
+  if (client->request != NULL) {
+    http_request_destroy(client->request);
+  }
+  if (client->response != NULL) {
+    http_response_destroy(client->response);
+  }
+  if (client->ws != NULL) {
+    websocket_destroy(client->ws);
+  }
+  free(client);
+
+  return NULL;
 }
 
 
 static void
 _client_connection_destroy(struct client_connection *const client) {
-  websocket_destroy(client->ws);
+  if (client->request != NULL) {
+    http_request_destroy(client->request);
+  }
+  if (client->response != NULL) {
+    http_response_destroy(client->response);
+  }
+  if (client->ws != NULL) {
+    websocket_destroy(client->ws);
+  }
   free(client);
 }
 

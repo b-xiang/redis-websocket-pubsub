@@ -16,6 +16,7 @@
 
 // Forwards declaration from http.h.
 struct http_request;
+struct http_response;
 
 enum websocket_state {
   WS_CLOSED,
@@ -64,7 +65,7 @@ struct websocket {
 
 struct websocket *websocket_init(int fd, const struct sockaddr_in *addr);
 enum status       websocket_destroy(struct websocket *ws);
-enum status       websocket_accept_http_request(struct websocket *ws, const struct http_request *req);
+enum status       websocket_accept_http_request(struct websocket *ws, struct http_response *response, const struct http_request *req);
 enum status       websocket_consume(struct websocket *ws, const uint8_t *bytes, size_t nbytes);
 enum status       websocket_flush_output(struct websocket *ws);
 enum status       websocket_shutdown(struct websocket *ws);
