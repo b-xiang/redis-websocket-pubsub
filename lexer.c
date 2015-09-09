@@ -129,3 +129,20 @@ fail:
   }
   return false;
 }
+
+
+/**
+ * WS = ( tab | space | CR | LF )*
+ **/
+void
+lexer_consume_ws(struct lexer *const lex) {
+  while (lexer_nremaining(lex) != 0) {
+    const char c = lexer_peek(lex);
+    if (c == '\t' || c == ' ' || c == '\n' || c == '\r') {
+      lexer_consume(lex, 1);
+    }
+    else {
+      break;
+    }
+  }
+}

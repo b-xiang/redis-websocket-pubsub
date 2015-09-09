@@ -1,4 +1,5 @@
 .*.sw[opq]
 *.o
-test-pubsub
+*.dSYM
+/test-*
 /libevent-2.0.22-stable*
