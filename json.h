@@ -50,6 +50,7 @@ enum status             json_value_destroy(struct json_value *value);
 struct json_value_list *json_value_get(const struct json_value *value, const char *key);
 enum status             json_value_set(struct json_value *object, const char *key, struct json_value *value);
 enum status             json_value_set_n(struct json_value *object, const char *key, size_t key_nbytes, struct json_value *value);
+enum status             json_value_set_nocopy(struct json_value *object, char *key, struct json_value *value);
 
 
 #endif  // JSON_H_

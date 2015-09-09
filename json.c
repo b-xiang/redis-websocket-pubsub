@@ -201,15 +201,13 @@ parse_object(struct lexer *const lex, struct evbuffer *const buffer) {
       return NULL;
     }
 
-    status = json_value_set(object, string, value);
+    status = json_value_set_nocopy(object, string, value);
     if (status != STATUS_OK) {
-      DEBUG0("parse_object", "failed to json_value_set_n\n");
+      DEBUG0("parse_object", "failed to json_value_set_nocopy\n");
       free(string);
       json_value_destroy(object);
       return NULL;
     }
-
-    free(string);
   }
 
   return object;
@@ -508,6 +506,30 @@ json_value_set_n(struct json_value *const object, const char *const key, const s
 
   // Construct the pair.
   pair->key = key_copy;
+  pair->value = value;
+  pair->next = object->as.pairs;
+  object->as.pairs = pair;
+
+  return STATUS_OK;
+}
+
+
+enum status
+json_value_set_nocopy(struct json_value *const object, char *const key, struct json_value *const value) {
+  struct json_value_list *pair;
+
+  if (object == NULL || object->type != JSON_VALUE_TYPE_OBJECT || key == NULL || value == NULL) {
+    return STATUS_EINVAL;
+  }
+
+  // Allocate memory.
+  pair = malloc(sizeof(struct json_value_list));
+  if (pair == NULL) {
+    return STATUS_ENOMEM;
+  }
+
+  // Construct the pair.
+  pair->key = key;
   pair->value = value;
   pair->next = object->as.pairs;
   object->as.pairs = pair;
