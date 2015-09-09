@@ -204,15 +204,16 @@ _client_connection_destroy(struct client_connection *const client) {
   if (client->ws != NULL) {
     websocket_destroy(client->ws);
   }
-  if (client->bev != NULL) {
-    bufferevent_free(client->bev);
-  }
 
   if (client->fd >= 0) {
     client_connection_shutdown(client);
     if (close(client->fd) == -1) {
       WARNING("_client_connection_destroy", "`close` on fd=%d failed: %s\n", client->fd, strerror(errno));
     }
+  }
+
+  if (client->bev != NULL) {
+    bufferevent_free(client->bev);
   }
 
   free(client);
@@ -251,6 +252,7 @@ client_connection_destroy_all(void) {
     _client_connection_destroy(client);
     client = next;
   }
+  clients = NULL;
 }
 
 
