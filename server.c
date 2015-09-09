@@ -15,12 +15,14 @@
 #include <unistd.h>
 
 #include <event.h>
+#include <event2/buffer.h>
 #include <event2/event.h>
 
 #include "client_connection.h"
 #include "lexer.h"
 #include "logging.h"
 #include "http.h"
+#include "json.h"
 #include "websocket.h"
 
 #ifndef SA_RESTART
@@ -143,7 +145,21 @@ set_nonblocking(const int fd) {
 
 static void
 handle_websocket_message(struct websocket *const ws) {
-  DEBUG("handle_websocket_message", "ws=%p ws->in_message_opcode=%d\n", ws, ws->in_message_opcode);
+  if (ws->in_message_is_binary) {
+    WARNING0("handle_websocket_message", "Unexpected binary message. Dropping.\n");
+    return;
+  }
+
+  const char *const encoded = (char *)evbuffer_pullup(ws->in_message_buffer, -1);
+  INFO("handle_websocket_message", "encoded=%p\n", encoded);
+  if (encoded == NULL) {
+    ERROR0("handle_websocket_message", "evbuffer_pullup returned null.\n");
+    return;
+  }
+
+  struct json_value *const msg = json_parse_n(encoded, evbuffer_get_length(ws->in_message_buffer));
+  INFO("handle_websocket_message", "JSON msg=%p\n", msg);
+  json_value_destroy(msg);
 }
 
 

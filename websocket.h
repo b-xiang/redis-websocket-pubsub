@@ -48,7 +48,7 @@ struct websocket {
   enum websocket_state in_state;  // The state of the websocket input processing.
   uint8_t in_frame_is_final;
   uint8_t in_frame_opcode;
-  uint8_t in_message_opcode;
+  uint8_t in_message_is_binary;
   uint8_t in_message_is_continuing;
   uint32_t in_frame_masking_key;
   uint64_t in_frame_nbytes;

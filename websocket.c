@@ -374,6 +374,8 @@ consume_needs_payload(struct websocket *const ws, const uint8_t *const bytes, co
       ws->in_message_is_continuing = false;
       // Call the message callback.
       ws->in_message_cb(ws);
+      // Drain the message buffer.
+      evbuffer_drain(ws->in_message_buffer, evbuffer_get_length(ws->in_message_buffer));
     }
 
     // Reset our state to waiting for a new frame.
@@ -383,13 +385,15 @@ consume_needs_payload(struct websocket *const ws, const uint8_t *const bytes, co
 
   case WS_OPCODE_TEXT_FRAME:
     DEBUG("consume_needs_payload", "Received TEXT frame on fd=%d. is_final=%d\n", ws->client->fd, ws->in_frame_is_final);
-    ws->in_message_opcode = WS_OPCODE_TEXT_FRAME;
+    ws->in_message_is_binary = false;
     if (ws->in_frame_is_final) {
       ws->in_message_is_continuing = false;
       // Move all data from the frame buffer into the message buffer.
-      evbuffer_add_buffer(ws->in_frame_buffer, ws->in_message_buffer);
+      evbuffer_add_buffer(ws->in_message_buffer, ws->in_frame_buffer);
       // Call the message callback.
       ws->in_message_cb(ws);
+      // Drain the message buffer.
+      evbuffer_drain(ws->in_message_buffer, evbuffer_get_length(ws->in_message_buffer));
     }
     else {
       ws->in_message_is_continuing = true;
@@ -404,13 +408,15 @@ consume_needs_payload(struct websocket *const ws, const uint8_t *const bytes, co
 
   case WS_OPCODE_BINARY_FRAME:
     DEBUG("consume_needs_payload", "Received BINARY frame on fd=%d. is_final=%d\n", ws->client->fd, ws->in_frame_is_final);
-    ws->in_message_opcode = WS_OPCODE_BINARY_FRAME;
+    ws->in_message_is_binary = true;
     if (ws->in_frame_is_final) {
       ws->in_message_is_continuing = false;
       // Move all data from the frame buffer into the message buffer.
       evbuffer_add_buffer(ws->in_frame_buffer, ws->in_message_buffer);
       // Call the message callback.
       ws->in_message_cb(ws);
+      // Drain the message buffer.
+      evbuffer_drain(ws->in_message_buffer, evbuffer_get_length(ws->in_message_buffer));
     }
     else {
       ws->in_message_is_continuing = true;

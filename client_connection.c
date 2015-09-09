@@ -193,6 +193,8 @@ fail:
 
 static void
 _client_connection_destroy(struct client_connection *const client) {
+  bufferevent_disable(client->bev, EV_READ | EV_WRITE);
+
   if (client->request != NULL) {
     http_request_destroy(client->request);
   }
@@ -261,6 +263,7 @@ client_connection_shutdown(struct client_connection *const client) {
   }
 
   if (!client->is_shutdown) {
+    bufferevent_disable(client->bev, EV_READ | EV_WRITE);
     ret = shutdown(client->fd, SHUT_RDWR);
     if (ret != 0) {
       WARNING("client_connection_shutdown", "`shutdown` on fd=%d failed: %s\n", client->fd, strerror(errno));
