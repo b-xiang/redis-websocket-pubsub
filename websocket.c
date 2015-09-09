@@ -243,33 +243,33 @@ websocket_accept_http_request(struct websocket *const ws, struct http_response *
 static void
 consume_needs_initial(struct websocket *const ws, const uint8_t *const bytes, const size_t nbytes) {
   assert(nbytes == 2);
-  ws->in_is_final = (bytes[0] >> 7) & 0x01;
-  ws->in_reserved = (bytes[0] >> 4) & 0x07;
-  ws->in_opcode = bytes[0] & 0x0f;
-  ws->in_is_masked = (bytes[1] >> 7) & 0x01;
-  ws->in_length = bytes[1] & 0x7f;
+  ws->in_frame_is_final = (bytes[0] >> 7) & 0x01;
+  const uint8_t in_reserved = (bytes[0] >> 4) & 0x07;
+  ws->in_frame_opcode = bytes[0] & 0x0f;
+  const bool in_is_masked = (bytes[1] >> 7) & 0x01;
+  ws->in_frame_nbytes = bytes[1] & 0x7f;
 
   // Validate the reserved bits and the masking flag.
   // "MUST be 0 unless an extension is negotiated that defines meanings for non-zero values."
-  DEBUG("consume_needs_initial", "Received new frame header fin=%u reserved=%u opcode=%u is_masked=%u, length=%" PRIu64 "\n", ws->in_is_final, ws->in_reserved, ws->in_opcode, ws->in_is_masked, ws->in_length);
-  if (ws->in_reserved != 0) {
+  DEBUG("consume_needs_initial", "Received new frame header fin=%u reserved=%u opcode=%u is_masked=%u, length=%" PRIu64 "\n", ws->in_frame_is_final, in_reserved, ws->in_frame_opcode, in_is_masked, ws->in_frame_nbytes);
+  if (in_reserved != 0) {
     ws->in_state = WS_CLOSED;
     client_connection_destroy(ws->client);
     return;
   }
-  // "All frames sent from to server have this bit set to 1."
-  if (!ws->in_is_masked) {
+  // "All frames sent to the server have this bit set to 1."
+  if (!in_is_masked) {
     ws->in_state = WS_CLOSED;
     client_connection_destroy(ws->client);
     return;
   }
 
   // Change state depending on how many more bytes of length data we need to read in.
-  if (ws->in_length == 126) {
+  if (ws->in_frame_nbytes == 126) {
     ws->in_state = WS_NEEDS_LENGTH_16;
     bufferevent_setwatermark(ws->client->bev, EV_READ, 2, 2);
   }
-  else if (ws->in_length == 127) {
+  else if (ws->in_frame_nbytes == 127) {
     ws->in_state = WS_NEEDS_LENGTH_64;
     bufferevent_setwatermark(ws->client->bev, EV_READ, 8, 8);
   }
@@ -279,7 +279,7 @@ consume_needs_initial(struct websocket *const ws, const uint8_t *const bytes, co
   }
 
   // Close the connection if required.
-  if (ws->in_opcode == WS_OPCODE_CONNECTION_CLOSE) {
+  if (ws->in_frame_opcode == WS_OPCODE_CONNECTION_CLOSE) {
     DEBUG("consume_needs_payload", "Closing client on fd=%d due to CLOSE opcode.\n", ws->client->fd);
     ws->in_state = WS_CLOSED;
     client_connection_destroy(ws->client);
@@ -291,8 +291,8 @@ static void
 consume_needs_length_16(struct websocket *const ws, const uint8_t *const bytes, const size_t nbytes) {
   // Update our length and fail the connection if the payload size is too large.
   assert(nbytes == 2);
-  ws->in_length = ntohs(*((uint16_t *)bytes));
-  if (ws->in_length > MAX_PAYLOAD_LENGTH) {
+  ws->in_frame_nbytes = ntohs(*((uint16_t *)bytes));
+  if (ws->in_frame_nbytes > MAX_PAYLOAD_LENGTH) {
     ws->in_state = WS_CLOSED;
     client_connection_destroy(ws->client);
     return;
@@ -308,8 +308,8 @@ static void
 consume_needs_length_64(struct websocket *const ws, const uint8_t *const bytes, const size_t nbytes) {
   assert(nbytes == 8);
   // Update our length and fail the connection if the payload size is too large.
-  ws->in_length = be64toh(*((uint64_t *)bytes));
-  if (ws->in_length > MAX_PAYLOAD_LENGTH) {
+  ws->in_frame_nbytes = be64toh(*((uint64_t *)bytes));
+  if (ws->in_frame_nbytes > MAX_PAYLOAD_LENGTH) {
     ws->in_state = WS_CLOSED;
     client_connection_destroy(ws->client);
     return;
@@ -325,11 +325,11 @@ static void
 consume_needs_masking_key(struct websocket *const ws, const uint8_t *const bytes, const size_t nbytes) {
   assert(nbytes == 4);
   // Keep the masking key in network byte order as the de-masking algorithm requires network byte order.
-  ws->in_masking_key = *((uint32_t *)bytes);
+  ws->in_frame_masking_key = *((uint32_t *)bytes);
 
   // Update our state.
   ws->in_state = WS_NEEDS_PAYLOAD;
-  bufferevent_setwatermark(ws->client->bev, EV_READ, ws->in_length, ws->in_length);
+  bufferevent_setwatermark(ws->client->bev, EV_READ, ws->in_frame_nbytes, ws->in_frame_nbytes);
 }
 
 
@@ -338,11 +338,11 @@ consume_needs_payload(struct websocket *const ws, const uint8_t *const bytes, co
   const uint8_t *upto;
   uint8_t quad[4];
   size_t slice, nbytes_remaining;
-  assert(nbytes == ws->in_length);
+  assert(nbytes == ws->in_frame_nbytes);
 
   // Drain the unmasked frame buffer and reserve space for the new data.
-  evbuffer_drain(ws->in_frame, evbuffer_get_length(ws->in_frame));
-  evbuffer_expand(ws->in_frame, nbytes);
+  evbuffer_drain(ws->in_frame_buffer, evbuffer_get_length(ws->in_frame_buffer));
+  evbuffer_expand(ws->in_frame_buffer, nbytes);
 
   // Unmask the input data and copy it into the frame buffer.
   nbytes_remaining = nbytes;
@@ -350,18 +350,31 @@ consume_needs_payload(struct websocket *const ws, const uint8_t *const bytes, co
   while (nbytes_remaining != 0) {
     slice = (nbytes_remaining >= 4) ? 4 : nbytes_remaining;
     memcpy(quad, upto, slice);
-    *((uint32_t *)&quad[0]) ^= ws->in_masking_key;
-    evbuffer_add(ws->in_frame, &quad[0], slice);
+    *((uint32_t *)&quad[0]) ^= ws->in_frame_masking_key;
+    evbuffer_add(ws->in_frame_buffer, &quad[0], slice);
     upto += slice;
     nbytes_remaining -= slice;
   }
 
   // Update our state.
-  switch (ws->in_opcode) {
+  switch (ws->in_frame_opcode) {
   case WS_OPCODE_CONTINUATION_FRAME:
-    DEBUG("consume_needs_payload", "Received CONTINUATION frame on fd=%d. is_final=%d\n", ws->client->fd, ws->in_is_final);
-    // Ensure we have an existing message to continue on from.
-    // TODO
+    DEBUG("consume_needs_payload", "Received CONTINUATION frame on fd=%d. is_final=%d\n", ws->client->fd, ws->in_frame_is_final);
+    // Ensure we are expecting a continuation frame.
+    if (!ws->in_message_is_continuing) {
+      ERROR0("consume_needs_payload", "Unexpected continuation frame. Closing WebSocket connection.\n");
+      ws->in_state = WS_CLOSED;
+      client_connection_destroy(ws->client);
+      break;
+    }
+
+    // Copy the frame buffer into the message buffer.
+    evbuffer_remove_buffer(ws->in_frame_buffer, ws->in_message_buffer, evbuffer_get_length(ws->in_frame_buffer));
+    if (ws->in_frame_is_final) {
+      ws->in_message_is_continuing = false;
+      // Call the message callback.
+      ws->in_message_cb(ws);
+    }
 
     // Reset our state to waiting for a new frame.
     ws->in_state = WS_NEEDS_INITIAL;
@@ -369,17 +382,20 @@ consume_needs_payload(struct websocket *const ws, const uint8_t *const bytes, co
     break;
 
   case WS_OPCODE_TEXT_FRAME:
-    DEBUG("consume_needs_payload", "Received TEXT frame on fd=%d. is_final=%d\n", ws->client->fd, ws->in_is_final);
-    nbytes_remaining = evbuffer_get_length(ws->in_frame);
-    DEBUG("consume_needs_payload", "evbuffer_get_length=>%zu\n", nbytes_remaining);
-    uint8_t *text = malloc(nbytes_remaining + 1);
-    assert(text != NULL);
-    evbuffer_remove(ws->in_frame, text, nbytes_remaining);
-    text[nbytes_remaining] = '\0';
-    DEBUG("consume_needs_payload", "text='%s'\n", (const char *)text);
-    free(text);
-    // Ensure we don't have an existing message to continue on from.
-    // TODO
+    DEBUG("consume_needs_payload", "Received TEXT frame on fd=%d. is_final=%d\n", ws->client->fd, ws->in_frame_is_final);
+    ws->in_message_opcode = WS_OPCODE_TEXT_FRAME;
+    if (ws->in_frame_is_final) {
+      ws->in_message_is_continuing = false;
+      // Move all data from the frame buffer into the message buffer.
+      evbuffer_add_buffer(ws->in_frame_buffer, ws->in_message_buffer);
+      // Call the message callback.
+      ws->in_message_cb(ws);
+    }
+    else {
+      ws->in_message_is_continuing = true;
+      // Copy the frame buffer into the message buffer.
+      evbuffer_remove_buffer(ws->in_frame_buffer, ws->in_message_buffer, evbuffer_get_length(ws->in_frame_buffer));
+    }
 
     // Reset our state to waiting for a new frame.
     ws->in_state = WS_NEEDS_INITIAL;
@@ -387,9 +403,20 @@ consume_needs_payload(struct websocket *const ws, const uint8_t *const bytes, co
     break;
 
   case WS_OPCODE_BINARY_FRAME:
-    DEBUG("consume_needs_payload", "Received BINARY frame on fd=%d. is_final=%d\n", ws->client->fd, ws->in_is_final);
-    // Ensure we don't have an existing message to continue on from.
-    // TODO
+    DEBUG("consume_needs_payload", "Received BINARY frame on fd=%d. is_final=%d\n", ws->client->fd, ws->in_frame_is_final);
+    ws->in_message_opcode = WS_OPCODE_BINARY_FRAME;
+    if (ws->in_frame_is_final) {
+      ws->in_message_is_continuing = false;
+      // Move all data from the frame buffer into the message buffer.
+      evbuffer_add_buffer(ws->in_frame_buffer, ws->in_message_buffer);
+      // Call the message callback.
+      ws->in_message_cb(ws);
+    }
+    else {
+      ws->in_message_is_continuing = true;
+      // Copy the frame buffer into the message buffer.
+      evbuffer_remove_buffer(ws->in_frame_buffer, ws->in_message_buffer, evbuffer_get_length(ws->in_frame_buffer));
+    }
 
     // Reset our state to waiting for a new frame.
     ws->in_state = WS_NEEDS_INITIAL;
@@ -407,7 +434,7 @@ consume_needs_payload(struct websocket *const ws, const uint8_t *const bytes, co
     DEBUG("consume_needs_payload", "Received PING from fd=%d. Sending PONG.\n", ws->client->fd);
     // "Upon receipt of a Ping frame, an endpoint MUST send a Pong frame in response, unless it
     // already received a Close frame. It SHOULD respond with Pong frame as soon as is practical."
-    send_pong(ws, ws->in_frame);
+    send_pong(ws, ws->in_frame_buffer);
 
     // Reset our state to waiting for a new frame.
     ws->in_state = WS_NEEDS_INITIAL;
@@ -424,7 +451,7 @@ consume_needs_payload(struct websocket *const ws, const uint8_t *const bytes, co
 
   default:
     // Close the connection since we received an unknown opcode.
-    ERROR("consume_needs_payload", "Unknown opcode %u\n", ws->in_opcode);
+    ERROR("consume_needs_payload", "Unknown opcode %u\n", ws->in_frame_opcode);
     ws->in_state = WS_CLOSED;
     client_connection_destroy(ws->client);
     break;
@@ -467,7 +494,11 @@ websocket_consume(struct websocket *const ws, const uint8_t *const bytes, const 
 
 
 struct websocket *
-websocket_init(struct client_connection *const client) {
+websocket_init(struct client_connection *const client, websocket_message_callback in_message_cb) {
+  if (client == NULL || in_message_cb == NULL) {
+    return NULL;
+  }
+
   struct websocket *const ws = malloc(sizeof(struct websocket));
   if (ws == NULL) {
     return NULL;
@@ -476,13 +507,14 @@ websocket_init(struct client_connection *const client) {
   memset(ws, 0, sizeof(struct websocket));
   ws->client = client;
   ws->out = evbuffer_new();
-  ws->in_frame = evbuffer_new();
-  ws->in_message = evbuffer_new();
   ws->in_state = WS_NEEDS_HTTP_UPGRADE;
+  ws->in_frame_buffer = evbuffer_new();
+  ws->in_message_buffer = evbuffer_new();
+  ws->in_message_cb = in_message_cb;
   ws->ping_frame = evbuffer_new();
 
   // Configure the buffers.
-  if (ws->out == NULL || ws->in_frame == NULL || ws->in_message == NULL || ws->ping_frame == NULL) {
+  if (ws->out == NULL || ws->in_frame_buffer == NULL || ws->in_message_buffer == NULL || ws->ping_frame == NULL) {
     websocket_destroy(ws);
     return NULL;
   }
@@ -505,11 +537,11 @@ websocket_destroy(struct websocket *const ws) {
   if (ws->out != NULL) {
     evbuffer_free(ws->out);
   }
-  if (ws->in_frame != NULL) {
-    evbuffer_free(ws->in_frame);
+  if (ws->in_frame_buffer != NULL) {
+    evbuffer_free(ws->in_frame_buffer);
   }
-  if (ws->in_message != NULL) {
-    evbuffer_free(ws->in_message);
+  if (ws->in_message_buffer != NULL) {
+    evbuffer_free(ws->in_message_buffer);
   }
   if (ws->ping_frame != NULL) {
     evbuffer_free(ws->ping_frame);

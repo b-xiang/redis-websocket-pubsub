@@ -141,7 +141,7 @@ on_write(struct bufferevent *const bev, void *const arg) {
 
 
 struct client_connection *
-client_connection_create(struct event_base *const event_loop, const int fd, const struct sockaddr_in *const addr) {
+client_connection_create(struct event_base *const event_loop, const int fd, const struct sockaddr_in *const addr, websocket_message_callback in_message_cb) {
   // Construct the client connection object.
   struct client_connection *const client = malloc(sizeof(struct client_connection));
   if (client == NULL) {
@@ -155,7 +155,7 @@ client_connection_create(struct event_base *const event_loop, const int fd, cons
   client->addr = *addr;
   client->request = http_request_init();
   client->response = http_response_init();
-  client->ws = websocket_init(client);
+  client->ws = websocket_init(client, in_message_cb);
   client->event_loop = event_loop;
   client->bev = bufferevent_socket_new(event_loop, fd, BEV_OPT_CLOSE_ON_FREE);
 

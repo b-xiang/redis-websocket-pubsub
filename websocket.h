@@ -20,7 +20,10 @@
 struct client_connection;
 struct http_request;
 struct http_response;
+struct websocket;
 
+
+typedef void (*websocket_message_callback)(struct websocket *ws);
 
 enum websocket_state {
   WS_CLOSED,
@@ -43,22 +46,23 @@ struct websocket {
 
   // Input processing state.
   enum websocket_state in_state;  // The state of the websocket input processing.
-  bool in_is_final;
-  bool in_is_masked;
-  uint8_t in_opcode;
-  uint8_t in_reserved;
-  uint32_t in_masking_key;
-  uint64_t in_length;
-  struct evbuffer *in_frame;    // The libevent unmasked input buffer for the current frame.
-  struct evbuffer *in_message;  // The libevent unmasked input buffer for the current message.
+  uint8_t in_frame_is_final;
+  uint8_t in_frame_opcode;
+  uint8_t in_message_opcode;
+  uint8_t in_message_is_continuing;
+  uint32_t in_frame_masking_key;
+  uint64_t in_frame_nbytes;
+  struct evbuffer *in_frame_buffer;    // The libevent unmasked input buffer for the current frame.
+  struct evbuffer *in_message_buffer;  // The libevent unmasked input buffer for the current message.
+  websocket_message_callback in_message_cb;
 
   // PING state.
-  unsigned int ping_count;
+  uint32_t ping_count;
   struct evbuffer *ping_frame;
 };
 
 
-struct websocket *websocket_init(struct client_connection *client);
+struct websocket *websocket_init(struct client_connection *client, websocket_message_callback in_message_cb);
 enum status       websocket_destroy(struct websocket *ws);
 enum status       websocket_accept_http_request(struct websocket *ws, struct http_response *response, const struct http_request *req);
 enum status       websocket_consume(struct websocket *ws, const uint8_t *bytes, size_t nbytes);

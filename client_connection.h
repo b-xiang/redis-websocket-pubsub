@@ -9,12 +9,12 @@
 #include <event2/event.h>
 
 #include "status.h"
+#include "websocket.h"
 
 
 // Forwards declarations.
 struct http_request;
 struct http_response;
-struct websocket;
 
 
 struct client_connection {
@@ -37,7 +37,7 @@ struct client_connection {
 };
 
 
-struct client_connection *client_connection_create(struct event_base *event_loop, int fd, const struct sockaddr_in *addr);
+struct client_connection *client_connection_create(struct event_base *event_loop, int fd, const struct sockaddr_in *addr, websocket_message_callback in_message_cb);
 void                      client_connection_destroy(struct client_connection *client);
 void                      client_connection_destroy_all(void);
 enum status               client_connection_shutdown(struct client_connection *client);

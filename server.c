@@ -141,6 +141,11 @@ set_nonblocking(const int fd) {
 }
 
 
+static void
+handle_websocket_message(struct websocket *const ws) {
+  DEBUG("handle_websocket_message", "ws=%p ws->in_message_opcode=%d\n", ws, ws->in_message_opcode);
+}
+
 
 static void
 setup_connection(const int fd, const struct sockaddr_in *const addr) {
@@ -151,7 +156,7 @@ setup_connection(const int fd, const struct sockaddr_in *const addr) {
     return;
   }
 
-  client = client_connection_create(server_loop, fd, addr);
+  client = client_connection_create(server_loop, fd, addr, &handle_websocket_message);
   if (client == NULL) {
     ERROR0("setup_connection", "failed to create client connection object\n");
     return;
