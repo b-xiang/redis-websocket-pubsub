@@ -33,16 +33,6 @@ enum websocket_state {
 };
 
 
-enum websocket_opcode {
-  WS_OPCODE_CONTINUATION_FRAME = 0x00,
-  WS_OPCODE_TEXT_FRAME = 0x01,
-  WS_OPCODE_BINARY_FRAME = 0x02,
-  WS_OPCODE_CONNECTION_CLOSE = 0x08,
-  WS_OPCODE_PING = 0x09,
-  WS_OPCODE_PONG = 0x0a,
-};
-
-
 struct websocket {
   // Client connection state.
   struct client_connection *client;  // The connection to the client.
