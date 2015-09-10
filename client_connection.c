@@ -18,22 +18,22 @@ static struct client_connection *clients = NULL;
 // Listening socket's libevent callbacks.
 // ================================================================================================
 static void
-client_connection_onerror(struct bufferevent *const bev, const short events, void *const arg) {
-  (void)bev;
+client_connection_onevent(struct bufferevent *const bev, const short events, void *const arg) {
   struct client_connection *const client = (struct client_connection *)arg;
+  (void)bev;
 
-  if (events & EVBUFFER_EOF) {
-    INFO("client_connection_onerror", "Remote host disconnected on fd=%d\n", client->fd);
+  if (events & BEV_EVENT_EOF) {
+    INFO("client_connection_onevent", "Remote host disconnected on fd=%d\n", client->fd);
     client->is_shutdown = true;
   }
   else if (events & BEV_EVENT_ERROR) {
-    WARNING("client_connection_onerror", "Got an error on fd=%d: %s\n", client->fd, evutil_socket_error_to_string(EVUTIL_SOCKET_ERROR()));
+    WARNING("client_connection_onevent", "Got an error on fd=%d: %s\n", client->fd, evutil_socket_error_to_string(EVUTIL_SOCKET_ERROR()));
   }
   else if (events & EVBUFFER_TIMEOUT) {
-    INFO("client_connection_onerror", "Remote host timed out on fd=%d\n", client->fd);
+    INFO("client_connection_onevent", "Remote host timed out on fd=%d\n", client->fd);
   }
   else {
-    WARNING("client_connection_onerror", "Remote host experienced an unknown error (0x%08x) on fd=%d\n", events, client->fd);
+    WARNING("client_connection_onevent", "Remote host experienced an unknown error (0x%08x) on fd=%d\n", events, client->fd);
   }
   client_connection_destroy(client);
 }
@@ -109,7 +109,7 @@ on_read(struct bufferevent *const bev, void *const arg) {
 
   // Read the data.
   const size_t nbytes = bufferevent_read(bev, buf, sizeof(buf));
-  DEBUG("on_read", "bufferevent_read read in %zu bytes from fd=%d\n", nbytes, client->fd);
+  DEBUG("on_read", "bufferevent_read read in %zu bytes from fd=%d client=%p\n", nbytes, client->fd, client);
   if (nbytes == 0) {
     return;
   }
@@ -165,7 +165,7 @@ client_connection_create(struct event_base *const event_loop, const int fd, cons
   }
 
   // Configure the buffered I/O event.
-  bufferevent_setcb(client->bev, &on_read, &on_write, &client_connection_onerror, client);
+  bufferevent_setcb(client->bev, &on_read, &on_write, &client_connection_onevent, client);
   bufferevent_settimeout(client->bev, 60, 0);
   bufferevent_enable(client->bev, EV_READ | EV_WRITE);
 
@@ -193,6 +193,7 @@ fail:
 
 static void
 _client_connection_destroy(struct client_connection *const client) {
+  bufferevent_setcb(client->bev, NULL, NULL, NULL, NULL);
   bufferevent_disable(client->bev, EV_READ | EV_WRITE);
 
   if (client->request != NULL) {
@@ -204,6 +205,10 @@ _client_connection_destroy(struct client_connection *const client) {
   if (client->ws != NULL) {
     websocket_destroy(client->ws);
   }
+  if (client->bev != NULL) {
+    bufferevent_free(client->bev);
+    client->bev = NULL;
+  }
 
   if (client->fd >= 0) {
     client_connection_shutdown(client);
@@ -212,20 +217,14 @@ _client_connection_destroy(struct client_connection *const client) {
     }
   }
 
-  if (client->bev != NULL) {
-    bufferevent_free(client->bev);
-  }
-
   free(client);
 }
 
 
 void
 client_connection_destroy(struct client_connection *const target) {
-  DEBUG("client_connection_destroy", "target=%p\n", (void *)target);
   struct client_connection *client, *prev = NULL;
   for (client = clients; client != NULL; client = client->next) {
-    DEBUG("client_connection_destroy", "target=%p client=%p\n", (void *)target, (void *)client);
     if (client == target) {
       // Update the linked list.
       if (prev == NULL) {
@@ -239,6 +238,7 @@ client_connection_destroy(struct client_connection *const target) {
       _client_connection_destroy(client);
       return;
     }
+
     prev = client;
   }
 }
@@ -258,14 +258,15 @@ client_connection_destroy_all(void) {
 
 enum status
 client_connection_shutdown(struct client_connection *const client) {
-  DEBUG("client_connection_shutdown", "client=%p\n", client);
   int ret;
   if (client == NULL) {
     return STATUS_EINVAL;
   }
 
   if (!client->is_shutdown) {
-    bufferevent_disable(client->bev, EV_READ | EV_WRITE);
+    if (client->bev != NULL) {
+      bufferevent_disable(client->bev, EV_READ | EV_WRITE);
+    }
     ret = shutdown(client->fd, SHUT_RDWR);
     if (ret != 0) {
       WARNING("client_connection_shutdown", "`shutdown` on fd=%d failed: %s\n", client->fd, strerror(errno));
