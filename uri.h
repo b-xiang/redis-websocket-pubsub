@@ -2,8 +2,7 @@
  * The URI format is defined in RFC2396
  * https://tools.ietf.org/html/rfc2396
  **/
-#ifndef URI_H_
-#define URI_H_
+#pragma once
 
 #include <stdint.h>
 #include <stdio.h>
@@ -35,5 +34,3 @@ enum status uri_parse_abs_path(struct uri *uri, struct lexer *lex);
 enum status uri_parse_absolute_uri(struct uri *uri, struct lexer *lex);
 enum status uri_parse_authority(struct uri *uri, struct lexer *lex);
 enum status uri_parse_relative_uri(struct uri *uri, struct lexer *lex);
-
-#endif  // URI_H_

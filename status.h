@@ -1,5 +1,4 @@
-#ifndef STATUS_H_
-#define STATUS_H_
+#pragma once
 
 enum status {
   STATUS_BAD,
@@ -8,5 +7,3 @@ enum status {
   STATUS_EINVAL,
   STATUS_DISCONNECTED,
 };
-
-#endif  // STATUS_H_

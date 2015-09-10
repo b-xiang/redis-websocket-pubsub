@@ -1,5 +1,4 @@
-#ifndef CLIENT_CONNECTION_H_
-#define CLIENT_CONNECTION_H_
+#pragma once
 
 #include <netinet/in.h>
 #include <stdbool.h>
@@ -41,5 +40,3 @@ struct client_connection *client_connection_create(struct event_base *event_loop
 void                      client_connection_destroy(struct client_connection *client);
 void                      client_connection_destroy_all(void);
 enum status               client_connection_shutdown(struct client_connection *client);
-
-#endif  // CLIENT_CONNECTION_H_

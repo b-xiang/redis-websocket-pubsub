@@ -1,5 +1,4 @@
-#ifndef LEXER_H_
-#define LEXER_H_
+#pragma once
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -26,5 +25,3 @@ void lexer_consume_ws(struct lexer *lex);
 #define lexer_memcmp(lex, str, n) (memcmp(lex->upto, str, n))
 #define lexer_strncmp(lex, str, n) (strncmp(lex->upto, str, n))
 #define lexer_upto(lex) (lex->upto)
-
-#endif

@@ -1,5 +1,4 @@
-#ifndef COMPAT_ENDIAN_H_
-#define COMPAT_ENDIAN_H_
+#pragma once
 
 #ifdef __APPLE__
   #include <libkern/OSByteOrder.h>
@@ -12,5 +11,3 @@
 #else
   #include <endian.h>
 #endif  // __APPLE__
-
-#endif  // COMPAT_ENDIAN_H_

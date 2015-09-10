@@ -2,8 +2,7 @@
  * The HTTP 1.1 protocol is defined in RFC2616
  * https://tools.ietf.org/html/rfc2616
  **/
-#ifndef HTTP_H_
-#define HTTP_H_
+#pragma once
 
 #include <stdint.h>
 
@@ -67,5 +66,3 @@ enum status           http_response_add_header_n(struct http_response *response,
 enum status           http_response_set_status_code(struct http_response *response, unsigned int status_code);
 enum status           http_response_set_version(struct http_response *response, uint32_t version_major, uint32_t version_minor);
 enum status           http_response_write_evbuffer(const struct http_response *response, struct evbuffer *out);
-
-#endif  // HTTP_H_

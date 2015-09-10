@@ -2,8 +2,7 @@
  * Base64 is defined in RFC4648
  * https://tools.ietf.org/html/rfc4648
  **/
-#ifndef BASE64_H_
-#define BASE64_H_
+#pragma once
 
 #include <stdlib.h>
 
@@ -21,5 +20,3 @@ enum status base64_init(struct base64_buffer *buffer);
 enum status base64_destroy(struct base64_buffer *buffer);
 enum status base64_decode(const char *input, size_t input_nbytes, struct base64_buffer *buffer);
 enum status base64_encode(const char *input, size_t input_nbytes, struct base64_buffer *buffer);
-
-#endif  // BASE64_H_

@@ -2,8 +2,7 @@
  * The WebSocket protocol is defined in RFC4655
  * https://tools.ietf.org/html/rfc6455
  **/
-#ifndef WEBSOCKET_H_
-#define WEBSOCKET_H_
+#pragma once
 
 #include <arpa/inet.h>
 #include <stdbool.h>
@@ -67,5 +66,3 @@ enum status       websocket_destroy(struct websocket *ws);
 enum status       websocket_accept_http_request(struct websocket *ws, struct http_response *response, const struct http_request *req);
 enum status       websocket_consume(struct websocket *ws, const uint8_t *bytes, size_t nbytes);
 enum status       websocket_flush_output(struct websocket *ws);
-
-#endif  // WEBSOCKET_H_
