@@ -13,4 +13,4 @@ test-base64: test-base64.o base64.o logging.o
 test-http: test-http.o base64.o client_connection.o http.o lexer.o logging.o uri.o websocket.o
 test-json: test-json.o json.o lexer.o
 test-pubsub: test-pubsub.o base64.o client_connection.o http.o lexer.o logging.o uri.o websocket.o
-server: base64.o client_connection.o http.o json.o lexer.o logging.o server.o uri.o websocket.o
+server: base64.o client_connection.o http.o json.o lexer.o logging.o redis_pubsub.o server.o uri.o websocket.o

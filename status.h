@@ -6,6 +6,7 @@ enum status {
   STATUS_OK,
   STATUS_ENOMEM,
   STATUS_EINVAL,
+  STATUS_DISCONNECTED,
 };
 
 #endif  // STATUS_H_

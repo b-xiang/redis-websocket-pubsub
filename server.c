@@ -23,6 +23,7 @@
 #include "logging.h"
 #include "http.h"
 #include "json.h"
+#include "redis_pubsub.h"
 #include "websocket.h"
 
 #ifndef SA_RESTART
@@ -43,9 +44,8 @@ static uint16_t bind_port = 9999;
 static const char *redis_host = "127.0.0.1";
 static uint16_t redis_port = 6379;
 
-// Static variable so it can be accessed by the signal handler.
 static struct event_base *server_loop = NULL;
-
+static struct redis_pubsub_manager *pubsub_mgr = NULL;
 
 
 // ================================================================================================
@@ -144,6 +144,42 @@ set_nonblocking(const int fd) {
 
 
 static void
+process_websocket_message(struct websocket *const ws, const struct json_value *const msg) {
+  enum status status;
+  struct json_value *action, *key, *data;
+
+  // Ensure we have `action`, `key`, and `data` elements.
+  action = json_value_get(msg, "action");
+  key = json_value_get(msg, "key");
+  if (action == NULL || key == NULL || action->type != JSON_VALUE_TYPE_STRING || key->type != JSON_VALUE_TYPE_STRING) {
+    WARNING0("process_websocket_message", "`action` or `key` invalid in JSON payload.\n");
+    return;
+  }
+
+  if (strcmp(action->as.string, "pub") == 0) {
+    data = json_value_get(msg, "data");
+    if (data == NULL || data->type != JSON_VALUE_TYPE_STRING) {
+      WARNING0("process_websocket_message", "`data` invalid in JSON payload.\n");
+      return;
+    }
+    status = pubsub_manager_publish(pubsub_mgr, key->as.string, data->as.string);
+    if (status != STATUS_OK && status != STATUS_DISCONNECTED) {
+      ERROR("process_websocket_message", "pubsub_manager_publish failed. status=%d\n", status);
+    }
+  }
+  else if (strcmp(action->as.string, "sub") == 0) {
+    status = pubsub_manager_subscribe(pubsub_mgr, key->as.string, ws);
+    if (status != STATUS_OK && status != STATUS_DISCONNECTED) {
+      ERROR("process_websocket_message", "pubsub_manager_subscribe failed. status=%d\n", status);
+    }
+  }
+  else {
+    WARNING("process_websocket_message", "unknown action '%s'\n", action->as.string);
+  }
+}
+
+
+static void
 handle_websocket_message(struct websocket *const ws) {
   if (ws->in_message_is_binary) {
     WARNING0("handle_websocket_message", "Unexpected binary message. Dropping.\n");
@@ -157,8 +193,13 @@ handle_websocket_message(struct websocket *const ws) {
     return;
   }
 
+  // Parse and process the JSON.
   struct json_value *const msg = json_parse_n(encoded, evbuffer_get_length(ws->in_message_buffer));
-  INFO("handle_websocket_message", "JSON msg=%p\n", msg);
+  if (msg == NULL) {
+    WARNING0("handle_websocket_message", "Failed to parse JSON payload.\n");
+    return;
+  }
+  process_websocket_message(ws, msg);
   json_value_destroy(msg);
 }
 
@@ -299,6 +340,13 @@ main(int argc, char **argv) {
     return 1;
   }
 
+  // Connect to redis.
+  pubsub_mgr = pubsub_manager_create(redis_host, redis_port, server_loop);
+  if (pubsub_mgr == NULL) {
+    ERROR0("main", "Failed to setup async connection to redis.\n");
+    return 1;
+  }
+
   // Run the libevent event loop.
   INFO("main", "Starting libevent event loop, listening on %s:%u\n", bind_host, bind_port);
   if (event_base_dispatch(server_loop) == -1) {
@@ -308,12 +356,15 @@ main(int argc, char **argv) {
   // Free up the connections.
   client_connection_destroy_all();
 
+  // Disconnect from redis.
+  pubsub_manager_destroy(pubsub_mgr);
+
   // Free up the libevent event loop.
   event_base_free(server_loop);
 
   // Close the main socket.
   if (close(listen_fd) == -1) {
-    perror("close(listen_fd) failed");
+    ERROR("main", "close(listen_fd) failed: %s", strerror(errno));
   }
 
   return 0;
