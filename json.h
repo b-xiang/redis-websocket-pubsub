@@ -41,16 +41,16 @@ struct json_value {
 };
 
 
-struct json_value *     json_parse(const char *string);
-struct json_value *     json_parse_n(const char *string, size_t nbytes);
+struct json_value *json_parse(const char *string);
+struct json_value *json_parse_n(const char *string, size_t nbytes);
 
-enum status             json_value_append(struct json_value *array, struct json_value *value);
-struct json_value *     json_value_create(enum json_value_type type);
-enum status             json_value_destroy(struct json_value *value);
-struct json_value_list *json_value_get(const struct json_value *value, const char *key);
-enum status             json_value_set(struct json_value *object, const char *key, struct json_value *value);
-enum status             json_value_set_n(struct json_value *object, const char *key, size_t key_nbytes, struct json_value *value);
-enum status             json_value_set_nocopy(struct json_value *object, char *key, struct json_value *value);
+enum status        json_value_append(struct json_value *array, struct json_value *value);
+struct json_value *json_value_create(enum json_value_type type);
+enum status        json_value_destroy(struct json_value *value);
+struct json_value *json_value_get(const struct json_value *value, const char *key);
+enum status        json_value_set(struct json_value *object, const char *key, struct json_value *value);
+enum status        json_value_set_n(struct json_value *object, const char *key, size_t key_nbytes, struct json_value *value);
+enum status        json_value_set_nocopy(struct json_value *object, char *key, struct json_value *value);
 
 
 #endif  // JSON_H_

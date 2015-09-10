@@ -163,7 +163,7 @@ parse_object(struct lexer *const lex, struct evbuffer *const buffer) {
     if (i != 0) {
       lexer_consume_ws(lex);
       if (lexer_nremaining(lex) == 0 || lexer_peek(lex) != ',') {
-        DEBUG0("parse_object", "failed to read ','\n");
+        DEBUG("parse_object", "failed to read ',' (%s)\n", lexer_upto(lex));
         json_value_destroy(object);
         return NULL;
       }
@@ -244,32 +244,39 @@ parse_string(struct lexer *const lex, struct evbuffer *const buffer) {
       case '\\':
       case '/':
         evbuffer_add(buffer, &c, 1);
+        lexer_consume(lex, 1);
         break;
       case 'b':
         c = '\b';
         evbuffer_add(buffer, &c, 1);
+        lexer_consume(lex, 1);
         break;
       case 'f':
         c = '\f';
         evbuffer_add(buffer, &c, 1);
+        lexer_consume(lex, 1);
         break;
       case 'n':
         c = '\n';
         evbuffer_add(buffer, &c, 1);
+        lexer_consume(lex, 1);
         break;
       case 'r':
         c = '\r';
         evbuffer_add(buffer, &c, 1);
+        lexer_consume(lex, 1);
         break;
       case 't':
         c = '\t';
         evbuffer_add(buffer, &c, 1);
+        lexer_consume(lex, 1);
         break;
       default:
         if (lexer_nremaining(lex) < 5 || c != 'u' || !isxdigit(lexer_upto(lex)[1]) || !isxdigit(lexer_upto(lex)[2]) || !isxdigit(lexer_upto(lex)[3]) || !isxdigit(lexer_upto(lex)[4])) {
           goto fail;
         }
         // TODO convert to Unicode code point and encode in UTF-8.
+        lexer_consume(lex, 5);
       }
     }
     else {
@@ -460,7 +467,7 @@ json_value_destroy(struct json_value *const value) {
 }
 
 
-struct json_value_list *
+struct json_value *
 json_value_get(const struct json_value *value, const char *const key) {
   struct json_value_list *pair;
 
@@ -470,7 +477,7 @@ json_value_get(const struct json_value *value, const char *const key) {
 
   for (pair = value->as.pairs; pair != NULL; pair = pair->next) {
     if (strcmp(pair->key, key) == 0) {
-      return pair;
+      return pair->value;
     }
   }
 
