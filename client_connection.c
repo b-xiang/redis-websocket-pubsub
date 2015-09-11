@@ -8,6 +8,7 @@
 #include "http.h"
 #include "lexer.h"
 #include "logging.h"
+#include "pubsub_manager.h"
 #include "websocket.h"
 
 
@@ -141,7 +142,7 @@ on_write(struct bufferevent *const bev, void *const arg) {
 
 
 struct client_connection *
-client_connection_create(struct event_base *const event_loop, const int fd, const struct sockaddr_in *const addr, websocket_message_callback in_message_cb) {
+client_connection_create(struct event_base *const event_loop, const int fd, const struct sockaddr_in *const addr, struct pubsub_manager *const pubsub_mgr, websocket_message_callback in_message_cb) {
   // Construct the client connection object.
   struct client_connection *const client = malloc(sizeof(struct client_connection));
   if (client == NULL) {
@@ -158,6 +159,7 @@ client_connection_create(struct event_base *const event_loop, const int fd, cons
   client->ws = websocket_init(client, in_message_cb);
   client->event_loop = event_loop;
   client->bev = bufferevent_socket_new(event_loop, fd, BEV_OPT_CLOSE_ON_FREE);
+  client->pubsub_mgr = pubsub_mgr;
 
   // Construct the websocket connection object.
   if (client->request == NULL || client->response == NULL || client->ws == NULL || client->bev == NULL) {
@@ -203,6 +205,7 @@ _client_connection_destroy(struct client_connection *const client) {
     http_response_destroy(client->response);
   }
   if (client->ws != NULL) {
+    pubsub_manager_unsubscribe_all(client->pubsub_mgr, client->ws);
     websocket_destroy(client->ws);
   }
   if (client->bev != NULL) {

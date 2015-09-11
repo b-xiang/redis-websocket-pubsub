@@ -219,7 +219,7 @@ setup_connection(const int fd, const struct sockaddr_in *const addr) {
     return;
   }
 
-  client = client_connection_create(server_loop, fd, addr, &handle_websocket_message);
+  client = client_connection_create(server_loop, fd, addr, pubsub_mgr, &handle_websocket_message);
   if (client == NULL) {
     ERROR0("setup_connection", "failed to create client connection object\n");
     return;

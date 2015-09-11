@@ -416,6 +416,58 @@ pubsub_manager_subscribe(struct pubsub_manager *const mgr, const char *const cha
 }
 
 
+static void
+remove_websocket_from_channel_chain(struct pubsub_manager *const mgr, const char *const canonical_channel, struct websocket *const ws) {
+  struct key_chain *key_chain, *prev_key_chain, *next_key_chain;
+  struct value_chain *value_chain, *prev_value_chain, *next_value_chain;
+
+  // Remove the websocket from the channel_buckets chain.
+  const size_t bucket = XXH64(canonical_channel, strlen(canonical_channel), 0) % HASHTABLE_NBUCKETS;
+  prev_key_chain = NULL;
+  for (key_chain = mgr->channel_buckets[bucket]; key_chain != NULL; key_chain = key_chain->next) {
+    if (key_chain->key == canonical_channel) {
+      break;
+    }
+    prev_key_chain = key_chain;
+  }
+  assert(key_chain != NULL);  // If this happens, the two hash tables are in an inconsistent state.
+
+  // Remove the websocket from the list of websockets listening to the channel.
+  prev_value_chain = NULL;
+  for (value_chain = key_chain->chain; value_chain != NULL; value_chain = value_chain->next) {
+    if (value_chain->value == ws) {
+      next_value_chain = value_chain->next;
+
+      free(value_chain);
+
+      if (prev_value_chain == NULL) {
+        key_chain->chain = next_value_chain;
+      }
+      else {
+        prev_value_chain->next = next_value_chain;
+      }
+      break;
+    }
+    prev_value_chain = value_chain;
+  }
+
+  // If there aren't any websockets left that listen to the channel, remove it.
+  if (key_chain->chain == NULL) {
+    next_key_chain = key_chain->next;
+
+    string_pool_release(mgr->string_pool, (const char *)key_chain->key);
+    free(key_chain);
+
+    if (prev_key_chain == NULL) {
+      mgr->channel_buckets[bucket] = next_key_chain;
+    }
+    else {
+      prev_key_chain->next = next_key_chain;
+    }
+  }
+}
+
+
 enum status
 pubsub_manager_unsubscribe(struct pubsub_manager *const mgr, const char *const channel, struct websocket *const ws) {
   enum status status = STATUS_OK;
@@ -482,49 +534,7 @@ pubsub_manager_unsubscribe(struct pubsub_manager *const mgr, const char *const c
   }
 
   // Remove the websocket from the channel_buckets chain.
-  bucket = XXH64(canonical_channel, strlen(canonical_channel), 0) % HASHTABLE_NBUCKETS;
-  prev_key_chain = NULL;
-  for (key_chain = mgr->channel_buckets[bucket]; key_chain != NULL; key_chain = key_chain->next) {
-    if (key_chain->key == canonical_channel) {
-      break;
-    }
-    prev_key_chain = key_chain;
-  }
-  assert(key_chain != NULL);  // If this happens, the two hash tables are in an inconsistent state.
-
-  // Remove the websocket from the list of websockets listening to the channel.
-  prev_value_chain = NULL;
-  for (value_chain = key_chain->chain; value_chain != NULL; value_chain = value_chain->next) {
-    if (value_chain->value == ws) {
-      next_value_chain = value_chain->next;
-
-      free(value_chain);
-
-      if (prev_value_chain == NULL) {
-        key_chain->chain = next_value_chain;
-      }
-      else {
-        prev_value_chain->next = next_value_chain;
-      }
-      break;
-    }
-    prev_value_chain = value_chain;
-  }
-
-  // If there aren't any websockets left that listen to the channel, remove it.
-  if (key_chain->chain == NULL) {
-    next_key_chain = key_chain->next;
-
-    string_pool_release(mgr->string_pool, (const char *)key_chain->key);
-    free(key_chain);
-
-    if (prev_key_chain == NULL) {
-      mgr->channel_buckets[bucket] = next_key_chain;
-    }
-    else {
-      prev_key_chain->next = next_key_chain;
-    }
-  }
+  remove_websocket_from_channel_chain(mgr, canonical_channel, ws);
 
   // Unsubscribe from the channel.
   redis_status = redisAsyncCommand(mgr->sub_ctx, NULL, NULL, "UNSUBSCRIBE %s", channel);
@@ -537,4 +547,54 @@ bail:
   // Release the canonical string.
   string_pool_release(mgr->string_pool, canonical_channel);
   return status;
+}
+
+
+enum status
+pubsub_manager_unsubscribe_all(struct pubsub_manager *const mgr, struct websocket *const ws) {
+  struct key_chain *key_chain, *prev_key_chain;
+  struct value_chain *value_chain, *next_value_chain;
+
+  if (mgr == NULL) {
+    return STATUS_EINVAL;
+  }
+  else if (!mgr->sub_is_connected) {
+    return STATUS_DISCONNECTED;
+  }
+
+  // Remove the channel from the websocket_buckets chain.
+  const size_t bucket = ((size_t)ws) % HASHTABLE_NBUCKETS;
+  prev_key_chain = NULL;
+  for (key_chain = mgr->websocket_buckets[bucket]; key_chain != NULL; key_chain = key_chain->next) {
+    if (key_chain->key == ws) {
+      break;
+    }
+    prev_key_chain = key_chain;
+  }
+  if (key_chain == NULL) {
+    return STATUS_OK;
+  }
+
+  // Remove the websocket from the channel_buckets chain.
+  for (value_chain = key_chain->chain; value_chain != NULL; ) {
+    next_value_chain = value_chain->next;
+
+    remove_websocket_from_channel_chain(mgr, (const char *)value_chain->value, ws);
+
+    string_pool_release(mgr->string_pool, (const char *)value_chain->value);
+    free(value_chain);
+
+    value_chain = next_value_chain;
+  }
+
+  // Update the key chain list and free the current key chain.
+  if (prev_key_chain == NULL) {
+    mgr->websocket_buckets[bucket] = key_chain->next;
+  }
+  else {
+    prev_key_chain = key_chain->next;
+  }
+  free(key_chain);
+
+  return STATUS_OK;
 }
