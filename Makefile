@@ -4,12 +4,15 @@ LDFLAGS = $(shell pkg-config --libs hiredis) $(shell pkg-config --libs libevent)
 
 OBJECTS = base64.o client_connection.o http.o json.o lexer.o logging.o pubsub_manager.o string_pool.o uri.o websocket.o xxhash.o
 
-.PHONY: all clean
+.PHONY: all clean wc
 
 all: server test-base64 test-http test-json test-pubsub
 
 clean:
 	-rm -f *.o test-pubsub
+
+wc:
+	find . -name '*.c' -or -name '*.h' | grep -v test- | xargs wc -l
 
 test-base64: test-base64.o $(OBJECTS)
 test-http: test-http.o $(OBJECTS)

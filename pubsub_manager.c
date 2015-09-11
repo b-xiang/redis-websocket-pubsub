@@ -113,15 +113,6 @@ on_disconnect(const redisAsyncContext *const ctx, const int status) {
 
 
 static void
-on_publish(redisAsyncContext *const ctx, void *const _reply, void *const privdata) {
-  struct pubsub_manager *const mgr = (struct pubsub_manager *)ctx->data;
-  const redisReply *const reply = _reply;
-
-  INFO("on_publish", "mgr=%p reply=%p privdata=%p\n", mgr, reply, privdata);
-}
-
-
-static void
 on_subscribe_subscribe(struct pubsub_manager *const mgr, struct websocket *const ws, const char *const channel) {
   struct key_chain *key_chain, *prev_key_chain;
   struct value_chain *value_chain;
@@ -366,7 +357,7 @@ pubsub_manager_publish_n(struct pubsub_manager *const mgr, const char *const cha
     return STATUS_DISCONNECTED;
   }
 
-  status = redisAsyncCommand(mgr->pub_ctx, &on_publish, NULL, "PUBLISH %s %b", channel, message, message_nbytes);
+  status = redisAsyncCommand(mgr->pub_ctx, NULL, NULL, "PUBLISH %s %b", channel, message, message_nbytes);
   if (status != REDIS_OK) {
     ERROR("pubsub_manager_publish_n", "async `PUBLISH %s` command failed. status=%d\n", channel, status);
     return STATUS_BAD;
@@ -416,10 +407,12 @@ pubsub_manager_subscribe(struct pubsub_manager *const mgr, const char *const cha
 }
 
 
-static void
+enum status
 remove_websocket_from_channel_chain(struct pubsub_manager *const mgr, const char *const canonical_channel, struct websocket *const ws) {
+  int redis_status;
   struct key_chain *key_chain, *prev_key_chain, *next_key_chain;
   struct value_chain *value_chain, *prev_value_chain, *next_value_chain;
+  enum status status = STATUS_OK;
 
   // Remove the websocket from the channel_buckets chain.
   const size_t bucket = XXH64(canonical_channel, strlen(canonical_channel), 0) % HASHTABLE_NBUCKETS;
@@ -453,6 +446,14 @@ remove_websocket_from_channel_chain(struct pubsub_manager *const mgr, const char
 
   // If there aren't any websockets left that listen to the channel, remove it.
   if (key_chain->chain == NULL) {
+    // Unsubscribe from the channel.
+    redis_status = redisAsyncCommand(mgr->sub_ctx, NULL, NULL, "UNSUBSCRIBE %s", canonical_channel);
+    if (redis_status != REDIS_OK) {
+      ERROR("remove_websocket_from_channel_chain", "async `UNSUBSCRIBE %s` command failed. status=%d\n", canonical_channel, redis_status);
+      status = STATUS_BAD;
+    }
+
+    // Remove it.
     next_key_chain = key_chain->next;
 
     string_pool_release(mgr->string_pool, (const char *)key_chain->key);
@@ -465,13 +466,13 @@ remove_websocket_from_channel_chain(struct pubsub_manager *const mgr, const char
       prev_key_chain->next = next_key_chain;
     }
   }
+
+  return status;
 }
 
 
 enum status
 pubsub_manager_unsubscribe(struct pubsub_manager *const mgr, const char *const channel, struct websocket *const ws) {
-  enum status status = STATUS_OK;
-  int redis_status;
   struct key_chain *key_chain, *prev_key_chain, *next_key_chain;
   struct value_chain *value_chain, *prev_value_chain, *next_value_chain;
   size_t bucket;
@@ -496,7 +497,8 @@ pubsub_manager_unsubscribe(struct pubsub_manager *const mgr, const char *const c
     prev_key_chain = key_chain;
   }
   if (key_chain == NULL) {
-    goto bail;
+    string_pool_release(mgr->string_pool, canonical_channel);
+    return STATUS_OK;
   }
 
   // Remove the node from the websocket to channel chain list.
@@ -534,17 +536,8 @@ pubsub_manager_unsubscribe(struct pubsub_manager *const mgr, const char *const c
   }
 
   // Remove the websocket from the channel_buckets chain.
-  remove_websocket_from_channel_chain(mgr, canonical_channel, ws);
+  const enum status status = remove_websocket_from_channel_chain(mgr, canonical_channel, ws);
 
-  // Unsubscribe from the channel.
-  redis_status = redisAsyncCommand(mgr->sub_ctx, NULL, NULL, "UNSUBSCRIBE %s", channel);
-  if (redis_status != REDIS_OK) {
-    ERROR("pubsub_manager_publish_n", "async `SUBSCRIBE %s` command failed. status=%d\n", channel, redis_status);
-    status = STATUS_BAD;
-  }
-
-bail:
-  // Release the canonical string.
   string_pool_release(mgr->string_pool, canonical_channel);
   return status;
 }
@@ -576,10 +569,14 @@ pubsub_manager_unsubscribe_all(struct pubsub_manager *const mgr, struct websocke
   }
 
   // Remove the websocket from the channel_buckets chain.
+  enum status status = STATUS_OK, s;
   for (value_chain = key_chain->chain; value_chain != NULL; ) {
     next_value_chain = value_chain->next;
 
-    remove_websocket_from_channel_chain(mgr, (const char *)value_chain->value, ws);
+    s = remove_websocket_from_channel_chain(mgr, (const char *)value_chain->value, ws);
+    if (s != STATUS_OK) {
+      status = s;
+    }
 
     string_pool_release(mgr->string_pool, (const char *)value_chain->value);
     free(value_chain);
@@ -596,5 +593,5 @@ pubsub_manager_unsubscribe_all(struct pubsub_manager *const mgr, struct websocke
   }
   free(key_chain);
 
-  return STATUS_OK;
+  return status;
 }
