@@ -23,7 +23,7 @@
 #include "logging.h"
 #include "http.h"
 #include "json.h"
-#include "redis_pubsub.h"
+#include "pubsub_manager.h"
 #include "websocket.h"
 
 #ifndef SA_RESTART
@@ -45,7 +45,7 @@ static const char *redis_host = "127.0.0.1";
 static uint16_t redis_port = 6379;
 
 static struct event_base *server_loop = NULL;
-static struct redis_pubsub_manager *pubsub_mgr = NULL;
+static struct pubsub_manager *pubsub_mgr = NULL;
 
 
 // ================================================================================================
@@ -171,6 +171,12 @@ process_websocket_message(struct websocket *const ws, const struct json_value *c
     status = pubsub_manager_subscribe(pubsub_mgr, key->as.string, ws);
     if (status != STATUS_OK && status != STATUS_DISCONNECTED) {
       ERROR("process_websocket_message", "pubsub_manager_subscribe failed. status=%d\n", status);
+    }
+  }
+  else if (strcmp(action->as.string, "unsub") == 0) {
+    status = pubsub_manager_unsubscribe(pubsub_mgr, key->as.string, ws);
+    if (status != STATUS_OK && status != STATUS_DISCONNECTED) {
+      ERROR("process_websocket_message", "pubsub_manager_unsubscribe failed. status=%d\n", status);
     }
   }
   else {
