@@ -543,3 +543,42 @@ json_value_set_nocopy(struct json_value *const object, char *const key, struct j
 
   return STATUS_OK;
 }
+
+
+enum status
+json_write_escape_string(struct evbuffer *const buffer, const char *const string) {
+  int ret = 0;
+  ret |= evbuffer_add_printf(buffer, "\"");
+  for (const uint8_t *c = (const uint8_t *)string; *c != '\0'; ++c) {
+    switch (*c) {
+    case '"':
+      ret |= evbuffer_add_printf(buffer, "\\\"");
+      break;
+    case '\\':
+      ret |= evbuffer_add_printf(buffer, "\\\\");
+      break;
+    case '/':
+      ret |= evbuffer_add_printf(buffer, "\\/");
+      break;
+    case '\b':
+      ret |= evbuffer_add_printf(buffer, "\\b");
+      break;
+    case '\f':
+      ret |= evbuffer_add_printf(buffer, "\\f");
+      break;
+    case '\n':
+      ret |= evbuffer_add_printf(buffer, "\\n");
+      break;
+    case '\r':
+      ret |= evbuffer_add_printf(buffer, "\\r");
+      break;
+    case '\t':
+      ret |= evbuffer_add_printf(buffer, "\\t");
+      break;
+    default:
+      ret |= evbuffer_add(buffer, c, 1);
+    }
+  }
+  ret |= evbuffer_add_printf(buffer, "\"");
+  return (ret == 0) ? STATUS_OK : STATUS_BAD;
+}

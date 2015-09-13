@@ -1,6 +1,13 @@
 CC = clang
-CFLAGS = -g -Wall -Wextra -Werror -Wformat -Wformat-security -Werror=format-security -Wno-error=deprecated-declarations -pedantic -std=c11 -D_FORTIFY_SOURCE=2 -D_POSIX_SOURCE -D_BSD_SOURCE $(shell pkg-config --cflags hiredis) $(shell pkg-config --cflags libevent) $(shell pkg-config --cflags openssl)
-LDFLAGS = $(shell pkg-config --libs hiredis) $(shell pkg-config --libs libevent) $(shell pkg-config --libs openssl)
+CFLAGS = \
+		-g -pedantic -std=c11 \
+		-fprofile-instr-generate -fcoverage-mapping \
+		-Wall -Wextra -Werror -Wformat -Wformat-security -Werror=format-security -Wno-error=deprecated-declarations \
+		-D_FORTIFY_SOURCE=2 -D_POSIX_SOURCE -D_BSD_SOURCE \
+		$(shell pkg-config --cflags hiredis) $(shell pkg-config --cflags libevent) $(shell pkg-config --cflags openssl)
+LDFLAGS = \
+		-fprofile-instr-generate -fcoverage-mapping \
+		$(shell pkg-config --libs hiredis) $(shell pkg-config --libs libevent) $(shell pkg-config --libs openssl)
 
 OBJECTS = base64.o client_connection.o http.o json.o lexer.o logging.o pubsub_manager.o string_pool.o uri.o websocket.o xxhash.o
 

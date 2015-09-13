@@ -3,10 +3,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <event2/buffer.h>
+#include <event2/event.h>
+
 #include <hiredis/hiredis.h>
 #include <hiredis/async.h>
 #include <hiredis/adapters/libevent.h>
 
+#include "json.h"
 #include "logging.h"
 #include "pubsub_manager.h"
 #include "string_pool.h"
@@ -38,6 +42,7 @@ struct pubsub_manager {
 
   // Keep track of the libevent loop that the redis async connections are bound to.
   struct event_base *event_base;
+  struct evbuffer *out_json_buffer;
 
   // Keep a string pool for quick hashtable lookup.
   struct string_pool *string_pool;
@@ -113,7 +118,7 @@ on_disconnect(const redisAsyncContext *const ctx, const int status) {
 
 
 static void
-on_subscribe_subscribe(struct pubsub_manager *const mgr, struct websocket *const ws, const char *const channel) {
+on_subscribed_reply_subscribe(struct pubsub_manager *const mgr, struct websocket *const ws, const char *const channel) {
   struct key_chain *key_chain, *prev_key_chain;
   struct value_chain *value_chain;
   size_t bucket;
@@ -136,7 +141,7 @@ on_subscribe_subscribe(struct pubsub_manager *const mgr, struct websocket *const
     // Create the key chain node for the channel to websockets mapping.
     key_chain = malloc(sizeof(struct key_chain));
     if (key_chain == NULL) {
-      ERROR0("on_subscribe_subscribe", "malloc failed.\n");
+      ERROR0("on_subscribed_reply_subscribe", "malloc failed.\n");
       string_pool_release(mgr->string_pool, canonical_channel);
       free(key_chain);
       return;
@@ -157,7 +162,7 @@ on_subscribe_subscribe(struct pubsub_manager *const mgr, struct websocket *const
   // Insert the websocket into the chain.
   value_chain = malloc(sizeof(struct value_chain));
   if (value_chain == NULL) {
-    ERROR0("on_subscribe_subscribe", "malloc failed.\n");
+    ERROR0("on_subscribed_reply_subscribe", "malloc failed.\n");
     string_pool_release(mgr->string_pool, canonical_channel);
     return;
   }
@@ -180,7 +185,7 @@ on_subscribe_subscribe(struct pubsub_manager *const mgr, struct websocket *const
     // Create the key chain node for the channel to websockets mapping.
     key_chain = malloc(sizeof(struct key_chain));
     if (key_chain == NULL) {
-      ERROR0("on_subscribe_subscribe", "malloc failed.\n");
+      ERROR0("on_subscribed_reply_subscribe", "malloc failed.\n");
       free(key_chain);
       return;
     }
@@ -199,7 +204,7 @@ on_subscribe_subscribe(struct pubsub_manager *const mgr, struct websocket *const
   // Insert the channel into the chain.
   value_chain = malloc(sizeof(struct value_chain));
   if (value_chain == NULL) {
-    ERROR0("on_subscribe_subscribe", "malloc failed.\n");
+    ERROR0("on_subscribed_reply_subscribe", "malloc failed.\n");
     return;
   }
   value_chain->value = (void *)canonical_channel;
@@ -209,31 +214,69 @@ on_subscribe_subscribe(struct pubsub_manager *const mgr, struct websocket *const
 
 
 static void
-on_subscribe(redisAsyncContext *const ctx, void *const _reply, void *const privdata) {
+on_subscribed_reply_message(struct pubsub_manager *const mgr, const char *const channel, const char *const message) {
+  struct key_chain *key_chain;
+  struct value_chain *value_chain;
+  struct websocket *ws;
+
+  // Get a ref-counted canonical version of the channel string.
+  const char *canonical_channel = string_pool_get(mgr->string_pool, channel);
+
+  // Find the chain of websockets subscribed to the channel.
+  const size_t bucket = XXH64(canonical_channel, strlen(canonical_channel), 0) % HASHTABLE_NBUCKETS;
+  for (key_chain = mgr->channel_buckets[bucket]; key_chain != NULL; key_chain = key_chain->next) {
+    if (key_chain->key == canonical_channel) {
+      break;
+    }
+  }
+  string_pool_release(mgr->string_pool, canonical_channel);
+  if (key_chain == NULL) {
+    return;
+  }
+
+  // Wrap the message in its JSON container.
+  evbuffer_drain(mgr->out_json_buffer, evbuffer_get_length(mgr->out_json_buffer));
+  evbuffer_add_printf(mgr->out_json_buffer, "{\"key\":");
+  json_write_escape_string(mgr->out_json_buffer, channel);
+  evbuffer_add_printf(mgr->out_json_buffer, ",\"data\":");
+  json_write_escape_string(mgr->out_json_buffer, message);
+  evbuffer_add_printf(mgr->out_json_buffer, "}");
+
+  // Write the JSON message to each of the websockets.
+  for (value_chain = key_chain->chain; value_chain != NULL; value_chain = value_chain->next) {
+    ws = (struct websocket *)value_chain->value;
+    DEBUG("on_subscribed_reply_message", "Sending to ws=%p via channel '%s'\n", ws, channel);
+    websocket_send_text(ws, mgr->out_json_buffer);
+  }
+}
+
+
+static void
+on_subscribed_reply(redisAsyncContext *const ctx, void *const _reply, void *const privdata) {
   struct pubsub_manager *const mgr = (struct pubsub_manager *)ctx->data;
   const redisReply *const reply = _reply;
   struct websocket *const ws = privdata;
 
-  INFO("on_subscribe", "mgr=%p reply=%p ws=%p\n", mgr, reply, ws);
+  INFO("on_subscribed_reply", "mgr=%p reply=%p ws=%p\n", mgr, reply, ws);
   if (reply == NULL) {
     return;
   }
   else if (reply->type != REDIS_REPLY_ARRAY || reply->elements != 3) {
     return;
   }
-  DEBUG("on_subscribe", "Received %s %s %s\n", reply->element[0]->str, reply->element[1]->str, reply->element[2]->str);
+  DEBUG("on_subscribed_reply", "Received %s %s %s\n", reply->element[0]->str, reply->element[1]->str, reply->element[2]->str);
 
   if (strcmp(reply->element[0]->str, "subscribe") == 0) {
-    on_subscribe_subscribe(mgr, ws, reply->element[1]->str);
+    on_subscribed_reply_subscribe(mgr, ws, reply->element[1]->str);
   }
   else if (strcmp(reply->element[0]->str, "message") == 0) {
-    // TODO
+    on_subscribed_reply_message(mgr, reply->element[1]->str, reply->element[2]->str);
   }
   else if (strcmp(reply->element[0]->str, "unsubscribe") == 0) {
     // Do nothing.
   }
   else {
-    ERROR("on_subscribe", "Received unknown message on subscription channel '%s' '%s' '%s'\n", reply->element[0]->str, reply->element[1]->str, reply->element[2]->str);
+    ERROR("on_subscribed_reply", "Received unknown message on subscription channel '%s' '%s' '%s'\n", reply->element[0]->str, reply->element[1]->str, reply->element[2]->str);
   }
 }
 
@@ -254,8 +297,11 @@ pubsub_manager_create(const char *const redis_host, const uint16_t redis_port, s
   }
   memset(mgr, 0, sizeof(struct pubsub_manager));
   mgr->event_base = event_base;
+  mgr->out_json_buffer = evbuffer_new();
   mgr->string_pool = string_pool_create();
-  if (mgr->string_pool == NULL) {
+  if (mgr->out_json_buffer == NULL || mgr->string_pool == NULL) {
+    string_pool_destroy(mgr->string_pool);
+    evbuffer_free(mgr->out_json_buffer);
     free(mgr);
     return NULL;
   }
@@ -332,6 +378,7 @@ pubsub_manager_destroy(struct pubsub_manager *const mgr) {
     redisAsyncDisconnect(mgr->sub_ctx);
   }
   string_pool_destroy(mgr->string_pool);
+  evbuffer_free(mgr->out_json_buffer);
   hashtable_destroy(mgr->channel_buckets, mgr->string_pool, true);
   hashtable_destroy(mgr->websocket_buckets, mgr->string_pool, false);
   free(mgr);
@@ -397,7 +444,7 @@ pubsub_manager_subscribe(struct pubsub_manager *const mgr, const char *const cha
   }
 
   DEBUG("pubsub_manager_subscribe", "Subscribing to channel '%s'\n", channel);
-  status = redisAsyncCommand(mgr->sub_ctx, &on_subscribe, ws, "SUBSCRIBE %s", channel);
+  status = redisAsyncCommand(mgr->sub_ctx, &on_subscribed_reply, ws, "SUBSCRIBE %s", channel);
   if (status != REDIS_OK) {
     ERROR("pubsub_manager_publish_n", "async `SUBSCRIBE %s` command failed. status=%d\n", channel, status);
     return STATUS_BAD;

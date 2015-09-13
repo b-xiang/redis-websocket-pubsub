@@ -10,7 +10,10 @@
 #include "status.h"
 
 
+// Forwards declarations.
+struct evbuffer;
 struct json_value;
+
 
 enum json_value_type {
   JSON_VALUE_TYPE_ARRAY,
@@ -50,3 +53,4 @@ struct json_value *json_value_get(const struct json_value *value, const char *ke
 enum status        json_value_set(struct json_value *object, const char *key, struct json_value *value);
 enum status        json_value_set_n(struct json_value *object, const char *key, size_t key_nbytes, struct json_value *value);
 enum status        json_value_set_nocopy(struct json_value *object, char *key, struct json_value *value);
+enum status        json_write_escape_string(struct evbuffer *buffer, const char *string);

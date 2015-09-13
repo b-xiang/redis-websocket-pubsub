@@ -77,6 +77,40 @@ send_frame(struct websocket *const ws, const enum websocket_opcode opcode, struc
 
 
 static enum status
+send_frame_bytes(struct websocket *const ws, const enum websocket_opcode opcode, const void *const payload, const size_t nbytes) {
+  // Write the first two header bytes of the frame.
+  uint8_t prefix[2];
+  if (nbytes > UINT16_MAX) {
+    prefix[1] = 127;
+  }
+  else if (nbytes > 125) {
+    prefix[1] = 126;
+  }
+  else {
+    prefix[1] = nbytes;
+  }
+  prefix[0] = 0x80 | ((uint8_t)opcode);
+  evbuffer_add(ws->out, &prefix[0], 2);
+
+  // Write an extended payload length if it's needed.
+  if (nbytes > UINT16_MAX) {
+    uint64_t length = htobe64(nbytes);
+    evbuffer_add(ws->out, &length, 8);
+  }
+  else if (nbytes > 125) {
+    uint16_t length = htobe16(nbytes);
+    evbuffer_add(ws->out, &length, 2);
+  }
+
+  // Write the unmasked application data.
+  evbuffer_add(ws->out, payload, nbytes);
+
+  // Flush the output buffer.
+  return websocket_flush_output(ws);
+}
+
+
+static enum status
 send_ping(struct websocket *const ws, struct evbuffer *const payload) {
   return send_frame(ws, WS_OPCODE_PING, payload);
 }
@@ -561,4 +595,40 @@ websocket_flush_output(struct websocket *const ws) {
   bufferevent_flush(ws->client->bev, EV_WRITE, BEV_FINISHED);
 
   return STATUS_OK;
+}
+
+
+enum status
+websocket_send_binary(struct websocket *const ws, struct evbuffer *const payload) {
+  if (ws == NULL || payload == NULL) {
+    return STATUS_EINVAL;
+  }
+  return send_frame(ws, WS_OPCODE_BINARY_FRAME, payload);
+}
+
+
+enum status
+websocket_send_binary_bytes(struct websocket *const ws, const void *const payload, const size_t nbytes) {
+  if (ws == NULL || payload == NULL) {
+    return STATUS_EINVAL;
+  }
+  return send_frame_bytes(ws, WS_OPCODE_BINARY_FRAME, payload, nbytes);
+}
+
+
+enum status
+websocket_send_text(struct websocket *const ws, struct evbuffer *const payload) {
+  if (ws == NULL || payload == NULL) {
+    return STATUS_EINVAL;
+  }
+  return send_frame(ws, WS_OPCODE_TEXT_FRAME, payload);
+}
+
+
+enum status
+websocket_send_text_bytes(struct websocket *const ws, const void *const payload, const size_t nbytes) {
+  if (ws == NULL || payload == NULL) {
+    return STATUS_EINVAL;
+  }
+  return send_frame_bytes(ws, WS_OPCODE_TEXT_FRAME, payload, nbytes);
 }

@@ -350,14 +350,18 @@ static const test_function_t TEST_CASES[] = {
   &test_space_tester,
   &test_simple_object_int_value,
   &test_simple_digit_array,
+  NULL,
 };
 
 
 int
 main(void) {
   unsigned int npassed = 0, nfailed = 0;
-  for (size_t i = 0; i != sizeof(TEST_CASES)/sizeof(test_function_t); ++i) {
-    if (TEST_CASES[i]()) {
+  for (size_t i = 0; ; ++i) {
+    if (TEST_CASES[i] == NULL) {
+      break;
+    }
+    else if (TEST_CASES[i]()) {
       ++npassed;
     }
     else {
