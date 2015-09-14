@@ -3,6 +3,7 @@
  * https://tools.ietf.org/html/rfc7159
  **/
 #include <ctype.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -214,9 +215,56 @@ parse_object(struct lexer *const lex, struct evbuffer *const buffer) {
 }
 
 
+static uint32_t
+parse_hex4(const char *hex4) {
+  uint32_t value = 0;
+  char c;
+  for (unsigned int i = 0; i != 4; ++i) {
+    value *= 16;
+    c = tolower(*hex4++);
+    if (c <= 'a' && c <= 'f') {
+      value += 10 + (c - 'a');
+    }
+    else {
+      value += c - '0';
+    }
+  }
+  return value;
+}
+
+
+static void
+write_utf8(const uint32_t cp, struct evbuffer *const buffer) {
+  uint8_t utf8[4];
+  if (cp <= 0x007F) {
+    utf8[0] = (cp & 0x7F);
+    evbuffer_add(buffer, &utf8[0], 1);
+  }
+  else if (cp <= 0x07FF) {
+    utf8[0] = (0xC0 | ((cp >>  6) & 0x1F));
+    utf8[1] = (0x80 | ((cp >>  0) & 0x3F));
+    evbuffer_add(buffer, &utf8[0], 2);
+  }
+  else if (cp <= 0xFFFF) {
+    utf8[0] = (0xE0 | ((cp >> 12) & 0x0F));
+    utf8[1] = (0x80 | ((cp >>  6) & 0x3F));
+    utf8[2] = (0x80 | ((cp >>  0) & 0x3F));
+    evbuffer_add(buffer, &utf8[0], 3);
+  }
+  else if (cp <= 0x1FFFFF) {
+    utf8[0] = (0xF0 | ((cp >> 18) & 0x07));
+    utf8[1] = (0x80 | ((cp >> 12) & 0x3F));
+    utf8[2] = (0x80 | ((cp >>  6) & 0x3F));
+    utf8[3] = (0x80 | ((cp >>  0) & 0x3F));
+    evbuffer_add(buffer, &utf8[0], 4);
+  }
+}
+
+
 static bool
 parse_string(struct lexer *const lex, struct evbuffer *const buffer) {
   char c;
+  uint32_t cp, pair_low, pair_high;
   evbuffer_drain(buffer, evbuffer_get_length(buffer));
 
   if (lexer_nremaining(lex) == 0 || lexer_peek(lex) != '"') {
@@ -275,8 +323,17 @@ parse_string(struct lexer *const lex, struct evbuffer *const buffer) {
         if (lexer_nremaining(lex) < 5 || c != 'u' || !isxdigit(lexer_upto(lex)[1]) || !isxdigit(lexer_upto(lex)[2]) || !isxdigit(lexer_upto(lex)[3]) || !isxdigit(lexer_upto(lex)[4])) {
           goto fail;
         }
-        // TODO convert to Unicode code point and encode in UTF-8.
+        pair_high = parse_hex4(lexer_upto(lex) + 1);
         lexer_consume(lex, 5);
+        if (lexer_nremaining(lex) >= 6 && lexer_upto(lex)[0] == '\\' && lexer_upto(lex)[1] == 'u' && isxdigit(lexer_upto(lex)[2]) && isxdigit(lexer_upto(lex)[3]) && isxdigit(lexer_upto(lex)[4]) && isxdigit(lexer_upto(lex)[5])) {
+          pair_low = parse_hex4(lexer_upto(lex) + 2);
+          lexer_consume(lex, 6);
+          cp = (((pair_high - 0xD800) << 10) | (pair_low - 0xDC00)) + 0x010000;
+        }
+        else {
+          cp = pair_high;
+        }
+        write_utf8(cp, buffer);
       }
     }
     else {
