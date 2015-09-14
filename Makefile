@@ -1,8 +1,15 @@
+BIN_DIR = bin
+OBJ_DIR = objs
+SRC_DIR = src
+TEST_BIN_DIR = test-bin
+TEST_OBJ_DIR = test-objs
+
 CC = clang
 CFLAGS = \
 		-g -pedantic -std=c11 \
 		-Wall -Wextra -Werror -Wformat -Wformat-security -Werror=format-security -Wno-error=deprecated-declarations \
 		-D_FORTIFY_SOURCE=2 -D_POSIX_SOURCE -D_BSD_SOURCE \
+		-I$(SRC_DIR)/ \
 		$(shell pkg-config --cflags hiredis) $(shell pkg-config --cflags libevent) $(shell pkg-config --cflags openssl)
 LDFLAGS = \
 		$(shell pkg-config --libs hiredis) $(shell pkg-config --libs libevent) $(shell pkg-config --libs openssl)
@@ -10,25 +17,20 @@ LDFLAGS = \
 TEST_CFLAGS = -fprofile-instr-generate -fcoverage-mapping
 TEST_LDFLAGS = -fprofile-instr-generate -fcoverage-mapping
 
-BIN_DIR = bin
-OBJ_DIR = objs
-TEST_BIN_DIR = test-bin
-TEST_OBJ_DIR = test-objs
-
 BASE_HEADERS = \
-		src/base64.h \
-		src/client_connection.h \
-		src/compat_endian.h \
-		src/http.h \
-		src/json.h \
-		src/lexer.h \
-		src/logging.h \
-		src/pubsub_manager.h \
-		src/status.h \
-		src/string_pool.h \
-		src/uri.h \
-		src/websocket.h \
-		src/xxhash.h
+		$(SRC_DIR)/base64.h \
+		$(SRC_DIR)/client_connection.h \
+		$(SRC_DIR)/compat_endian.h \
+		$(SRC_DIR)/http.h \
+		$(SRC_DIR)/json.h \
+		$(SRC_DIR)/lexer.h \
+		$(SRC_DIR)/logging.h \
+		$(SRC_DIR)/pubsub_manager.h \
+		$(SRC_DIR)/status.h \
+		$(SRC_DIR)/string_pool.h \
+		$(SRC_DIR)/uri.h \
+		$(SRC_DIR)/websocket.h \
+		$(SRC_DIR)/xxhash.h
 BASE_OBJECTS = \
 		base64.o \
 		client_connection.o \
@@ -80,13 +82,10 @@ $(TEST_BIN_DIR):
 $(TEST_OBJ_DIR):
 	mkdir -p $@
 
-$(OBJECTS): $(BASE_HEADERS)
-$(TEST_OBJECTS): $(BASE_HEADERS)
-
-$(OBJ_DIR)/%.o: src/%.c $(OBJ_DIR)
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.c $(OBJ_DIR) $(BASE_HEADERS)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(TEST_OBJ_DIR)/%.o: src/%.c $(TEST_OBJ_DIR)
+$(TEST_OBJ_DIR)/%.o: $(SRC_DIR)/%.c $(TEST_OBJ_DIR) $(BASE_HEADERS)
 	$(CC) $(CFLAGS) $(TEST_CFLAGS) -c -o $@ $<
 
 
