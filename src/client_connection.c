@@ -4,7 +4,14 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <event.h>
+#include <event2/buffer.h>
+#include <event2/bufferevent.h>
+#include <event2/bufferevent_ssl.h>
+#include <event2/event.h>
+
 #include "client_connection.h"
+#include "compat_openssl.h"
 #include "http.h"
 #include "lexer.h"
 #include "logging.h"
@@ -142,7 +149,7 @@ on_write(struct bufferevent *const bev, void *const arg) {
 
 
 struct client_connection *
-client_connection_create(struct event_base *const event_loop, const int fd, const struct sockaddr_in *const addr, struct pubsub_manager *const pubsub_mgr, websocket_message_callback in_message_cb) {
+client_connection_create(struct event_base *const event_loop, SSL_CTX *const ssl_ctx, const int fd, struct pubsub_manager *const pubsub_mgr, websocket_message_callback in_message_cb) {
   // Construct the client connection object.
   struct client_connection *const client = malloc(sizeof(struct client_connection));
   if (client == NULL) {
@@ -153,12 +160,20 @@ client_connection_create(struct event_base *const event_loop, const int fd, cons
   // Construct the client_connection instance and insert it into the list of all clients.
   memset(client, 0, sizeof(struct client_connection));
   client->fd = fd;
-  client->addr = *addr;
   client->request = http_request_init();
   client->response = http_response_init();
   client->ws = websocket_init(client, in_message_cb);
   client->event_loop = event_loop;
-  client->bev = bufferevent_socket_new(event_loop, fd, BEV_OPT_CLOSE_ON_FREE);
+  if (ssl_ctx == NULL) {
+    client->bev = bufferevent_socket_new(event_loop, fd, BEV_OPT_CLOSE_ON_FREE);
+  }
+  else {
+    client->ssl = openssl_SSL_new(ssl_ctx);
+    if (client->ssl == NULL) {
+      goto fail;
+    }
+    client->bev = bufferevent_openssl_socket_new(event_loop, fd, client->ssl, BUFFEREVENT_SSL_CONNECTING, BEV_OPT_CLOSE_ON_FREE);
+  }
   client->pubsub_mgr = pubsub_mgr;
 
   // Construct the websocket connection object.
@@ -207,6 +222,9 @@ _client_connection_destroy(struct client_connection *const client) {
   if (client->ws != NULL) {
     pubsub_manager_unsubscribe_all(client->pubsub_mgr, client->ws);
     websocket_destroy(client->ws);
+  }
+  if (client->ssl != NULL) {
+    openssl_SSL_free(client->ssl);
   }
   if (client->bev != NULL) {
     bufferevent_free(client->bev);

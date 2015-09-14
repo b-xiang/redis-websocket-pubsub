@@ -19,6 +19,7 @@
 #include <event2/event.h>
 
 #include "client_connection.h"
+#include "compat_openssl.h"
 #include "lexer.h"
 #include "logging.h"
 #include "http.h"
@@ -31,23 +32,37 @@
 #endif
 
 
+static const char *bind_host = "0.0.0.0";
+static uint16_t bind_port = 9999;
+
+static const char *redis_host = "127.0.0.1";
+static uint16_t redis_port = 6379;
+
+static const char *log_path = "/dev/stderr";
+
+static int use_ssl = 0;
+static const char *ssl_certificate_chain_path = NULL;
+static const char *ssl_dh_params_path = NULL;
+static const char *ssl_private_key_path = NULL;
+
 static const struct option ARGV_OPTIONS[] = {
   {"bind_host", required_argument, NULL, 'h'},
   {"bind_port", required_argument, NULL, 'p'},
   {"redis_host", required_argument, NULL, 'H'},
   {"redis_port", required_argument, NULL, 'P'},
   {"log", required_argument, NULL, 'l'},
+  {"use_ssl", no_argument, &use_ssl, 100},
+  {"ssl_certificate_chain", required_argument, NULL, 101},
+  {"ssl_dh_params", required_argument, NULL, 102},
+  {"ssl_private_key", required_argument, NULL, 103},
   {NULL, 0, NULL, 0},
 };
 
-static const char *bind_host = "0.0.0.0";
-static uint16_t bind_port = 9999;
-static const char *redis_host = "127.0.0.1";
-static uint16_t redis_port = 6379;
-static const char *log_path = "/dev/stderr";
 
+// Server-level global singletons.
 static struct event_base *server_loop = NULL;
 static struct pubsub_manager *pubsub_mgr = NULL;
+static SSL_CTX *ssl_ctx = NULL;
 
 
 // ================================================================================================
@@ -78,6 +93,8 @@ parse_argv(int argc, char *const *argv) {
     switch (c) {
     case -1:  // Finished processing.
       return true;
+    case 0:  // No arguments.
+      break;
     case 'h':
       bind_host = optarg;
       break;
@@ -104,6 +121,15 @@ parse_argv(int argc, char *const *argv) {
       break;
     case 'l':
       log_path = optarg;
+      break;
+    case 101:
+      ssl_certificate_chain_path = optarg;
+      break;
+    case 102:
+      ssl_dh_params_path = optarg;
+      break;
+    case 103:
+      ssl_private_key_path = optarg;
       break;
     case '?':  // Unknown option.
       print_usage(stderr);
@@ -216,7 +242,7 @@ handle_websocket_message(struct websocket *const ws) {
 
 
 static void
-setup_connection(const int fd, const struct sockaddr_in *const addr) {
+setup_connection(const int fd) {
   struct client_connection *client;
 
   if (set_nonblocking(fd) != 0) {
@@ -224,7 +250,7 @@ setup_connection(const int fd, const struct sockaddr_in *const addr) {
     return;
   }
 
-  client = client_connection_create(server_loop, fd, addr, pubsub_mgr, &handle_websocket_message);
+  client = client_connection_create(server_loop, ssl_ctx, fd, pubsub_mgr, &handle_websocket_message);
   if (client == NULL) {
     ERROR0("setup_connection", "failed to create client connection object\n");
     return;
@@ -256,7 +282,7 @@ on_accept(const int listen_fd, const short events, void *const arg) {
     }
 
     INFO("on_accept", "Accepted child connection on fd %d\n", in_fd);
-    setup_connection(in_fd, &in_addr);
+    setup_connection(in_fd);
   }
 }
 
@@ -305,6 +331,26 @@ main(int argc, char **argv) {
     return 1;
   }
   INFO("main", "libevent is using %s for events.\n", event_base_get_method(server_loop));
+
+  // Initialise and configure OpenSSL.
+  if (use_ssl) {
+    if (ssl_certificate_chain_path == NULL) {
+      ERROR0("main", "ssl_certificate_chain is unset.\n");
+      return 1;
+    }
+    else if (ssl_dh_params_path == NULL) {
+      ERROR0("main", "ssl_dh_params is unset.\n");
+      return 1;
+    }
+    else if (ssl_private_key_path == NULL) {
+      ERROR0("main", "ssl_private_key is unset.\n");
+      return 1;
+    }
+    ssl_ctx = openssl_initialise(ssl_certificate_chain_path, ssl_private_key_path, ssl_dh_params_path);
+    if (ssl_ctx == NULL) {
+      return 1;
+    }
+  }
 
   // Create the input socket address structure.
   struct sockaddr_in bind_addr;
@@ -379,6 +425,12 @@ main(int argc, char **argv) {
   // Close the main socket.
   if (close(listen_fd) == -1) {
     ERROR("main", "close(listen_fd) failed: %s", strerror(errno));
+  }
+
+  // Teardown OpenSSL.
+  if (use_ssl) {
+    openssl_destroy(ssl_ctx);
+    ssl_ctx = NULL;
   }
 
   // Teardown logging.

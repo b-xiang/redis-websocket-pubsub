@@ -290,7 +290,6 @@ pubsub_manager_create(const char *const redis_host, const uint16_t redis_port, s
 
   // Setup the pubsub manager.
   struct pubsub_manager *const mgr = malloc(sizeof(struct pubsub_manager));
-  DEBUG("pubsub_manager_create", "sizeof(pubsub_manager)=%zu\n", sizeof(struct pubsub_manager));
   if (mgr == NULL) {
     ERROR0("pubsub_manager_create", "malloc failed.\n");
     return NULL;

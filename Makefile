@@ -9,9 +9,9 @@ CFLAGS = \
 		-Wall -Wextra -Werror -Wformat -Wformat-security -Werror=format-security \
 		-D_FORTIFY_SOURCE=2 -D_POSIX_SOURCE -D_BSD_SOURCE \
 		-I$(SRC_DIR)/ \
-		$(shell pkg-config --cflags hiredis) $(shell pkg-config --cflags libevent) $(shell pkg-config --cflags openssl)
+		$(shell pkg-config --cflags hiredis) $(shell pkg-config --cflags libevent) $(shell pkg-config --cflags libevent_openssl) $(shell pkg-config --cflags openssl)
 LDFLAGS = \
-		$(shell pkg-config --libs hiredis) $(shell pkg-config --libs libevent) $(shell pkg-config --libs openssl)
+		$(shell pkg-config --libs hiredis) $(shell pkg-config --libs libevent) $(shell pkg-config --libs libevent_openssl) $(shell pkg-config --libs openssl)
 
 TEST_CFLAGS = -fprofile-arcs -ftest-coverage
 TEST_LDFLAGS = -fprofile-arcs -ftest-coverage
@@ -20,6 +20,7 @@ BASE_HEADERS = \
 		$(SRC_DIR)/base64.h \
 		$(SRC_DIR)/client_connection.h \
 		$(SRC_DIR)/compat_endian.h \
+		$(SRC_DIR)/compat_openssl.h \
 		$(SRC_DIR)/http.h \
 		$(SRC_DIR)/json.h \
 		$(SRC_DIR)/lexer.h \
@@ -33,6 +34,7 @@ BASE_HEADERS = \
 BASE_OBJECTS = \
 		base64.o \
 		client_connection.o \
+		compat_openssl.o \
 		http.o \
 		json.o \
 		lexer.o \

@@ -13,11 +13,10 @@
 #include <strings.h>
 #include <unistd.h>
 
-#include <openssl/sha.h>
-
 #include "base64.h"
 #include "client_connection.h"
 #include "compat_endian.h"
+#include "compat_openssl.h"
 #include "http.h"
 #include "logging.h"
 
@@ -228,14 +227,7 @@ websocket_accept_http_request(struct websocket *const ws, struct http_response *
   }
   memcpy(sha1_input_buffer, header->value, key_nbytes);
   memcpy(sha1_input_buffer + key_nbytes, SEC_WEBSOCKET_KEY_GUID, guid_nbytes);
-#if defined(__APPLE__) && defined(__clang__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-#endif
-  SHA1(sha1_input_buffer, key_nbytes + guid_nbytes, sha1_output_buffer);
-#if defined(__APPLE__) && defined(__clang__)
-#pragma clang diagnostic pop
-#endif
+  openssl_SHA1(sha1_input_buffer, key_nbytes + guid_nbytes, sha1_output_buffer);
   free(sha1_input_buffer);
 
   // Convert the SHA1 hash bytes into its base64 representation.

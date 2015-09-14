@@ -7,8 +7,8 @@
 #include "logging.h"
 
 
-FILE *file = NULL;
-bool file_needs_close = false;
+static FILE *file = NULL;
+static bool file_needs_close = false;
 
 
 void
