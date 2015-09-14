@@ -36,6 +36,7 @@ static const struct option ARGV_OPTIONS[] = {
   {"bind_port", required_argument, NULL, 'p'},
   {"redis_host", required_argument, NULL, 'H'},
   {"redis_port", required_argument, NULL, 'P'},
+  {"log", required_argument, NULL, 'l'},
   {NULL, 0, NULL, 0},
 };
 
@@ -43,6 +44,7 @@ static const char *bind_host = "0.0.0.0";
 static uint16_t bind_port = 9999;
 static const char *redis_host = "127.0.0.1";
 static uint16_t redis_port = 6379;
+static const char *log_path = "/dev/stderr";
 
 static struct event_base *server_loop = NULL;
 static struct pubsub_manager *pubsub_mgr = NULL;
@@ -72,7 +74,7 @@ static bool
 parse_argv(int argc, char *const *argv) {
   int index, c, tmp;
   while (true) {
-    c = getopt_long(argc, argv, "h:p:H:P:", ARGV_OPTIONS, &index);
+    c = getopt_long(argc, argv, "h:p:H:P:l:", ARGV_OPTIONS, &index);
     switch (c) {
     case -1:  // Finished processing.
       return true;
@@ -99,6 +101,9 @@ parse_argv(int argc, char *const *argv) {
         return false;
       }
       redis_port = (uint16_t)tmp;
+      break;
+    case 'l':
+      log_path = optarg;
       break;
     case '?':  // Unknown option.
       print_usage(stderr);
@@ -271,6 +276,9 @@ main(int argc, char **argv) {
     return 1;
   }
 
+  // Setup logging.
+  logging_open(log_path);
+
   // Ignore SIGPIPE and die gracefully on SIGINT and SIGTERM.
   if (signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
     perror("call to signal() failed");
@@ -372,6 +380,9 @@ main(int argc, char **argv) {
   if (close(listen_fd) == -1) {
     ERROR("main", "close(listen_fd) failed: %s", strerror(errno));
   }
+
+  // Teardown logging.
+  logging_close();
 
   return 0;
 }
