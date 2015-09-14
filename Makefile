@@ -1,3 +1,4 @@
+# Dependencies: libevent-dev libhiredis-dev libssl-dev pkg-config
 BIN_DIR = bin
 OBJ_DIR = objs
 SRC_DIR = src

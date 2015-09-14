@@ -28,7 +28,6 @@ static struct client_connection *clients = NULL;
 static void
 client_connection_onevent(struct bufferevent *const bev, const short events, void *const arg) {
   struct client_connection *const client = (struct client_connection *)arg;
-  (void)bev;
 
   if (events & BEV_EVENT_EOF) {
     INFO("client_connection_onevent", "Remote host disconnected on fd=%d\n", client->fd);
@@ -36,6 +35,10 @@ client_connection_onevent(struct bufferevent *const bev, const short events, voi
   }
   else if (events & BEV_EVENT_ERROR) {
     WARNING("client_connection_onevent", "Got an error on fd=%d: %s\n", client->fd, evutil_socket_error_to_string(EVUTIL_SOCKET_ERROR()));
+    unsigned long err;
+    while ((err = bufferevent_get_openssl_error(bev))) {
+      WARNING("client_connection_onevent", "bufferevent_get_openssl_error:%s:%s:%s\n", openssl_ERR_reason_error_string(err), openssl_ERR_lib_error_string(err), openssl_ERR_func_error_string(err));
+    }
   }
   else if (events & EVBUFFER_TIMEOUT) {
     INFO("client_connection_onevent", "Remote host timed out on fd=%d\n", client->fd);
@@ -223,12 +226,12 @@ _client_connection_destroy(struct client_connection *const client) {
     pubsub_manager_unsubscribe_all(client->pubsub_mgr, client->ws);
     websocket_destroy(client->ws);
   }
-  if (client->ssl != NULL) {
-    openssl_SSL_free(client->ssl);
-  }
   if (client->bev != NULL) {
     bufferevent_free(client->bev);
     client->bev = NULL;
+  }
+  if (client->ssl != NULL) {
+    openssl_SSL_free(client->ssl);
   }
 
   if (client->fd >= 0) {

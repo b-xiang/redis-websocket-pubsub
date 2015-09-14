@@ -16,8 +16,6 @@
 #include "compat_openssl.h"
 #include "logging.h"
 
-static const char *const ALLOWED_SSL_CIPHERS = "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA:DHE-RSA-AES256-SHA";
-
 
 static void *
 zeroing_malloc(const size_t nbytes) {
@@ -26,7 +24,7 @@ zeroing_malloc(const size_t nbytes) {
 
 
 SSL_CTX *
-openssl_initialise(const char *const certificate_chain_path, const char *const private_key_path, const char *const dh_params_path) {
+openssl_initialise(const char *const certificate_chain_path, const char *const private_key_path, const char *const dh_params_path, const char *const ssl_ciphers) {
   int ret;
 
   // Set a zeroing malloc.
@@ -48,18 +46,18 @@ openssl_initialise(const char *const certificate_chain_path, const char *const p
   }
 
   // Create a SSL context object.
-  SSL_CTX *const ssl_ctx = SSL_CTX_new(SSLv23_server_method());
+  SSL_CTX *const ssl_ctx = SSL_CTX_new(SSLv23_method());
   if (ssl_ctx == NULL) {
     ERROR0("openssl_initialise", "Call to `SSL_CTX_new` failed.\n");
     ERR_print_errors_fp(stderr);
     return NULL;
   }
-  SSL_CTX_set_options(ssl_ctx, SSL_OP_SINGLE_DH_USE | SSL_OP_SINGLE_ECDH_USE | SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3);
+  SSL_CTX_set_options(ssl_ctx, SSL_OP_SINGLE_DH_USE | SSL_OP_SINGLE_ECDH_USE | SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_CIPHER_SERVER_PREFERENCE);
 
   // Explicitly set the ciphers.
-  ret = SSL_CTX_set_cipher_list(ssl_ctx, ALLOWED_SSL_CIPHERS);
+  ret = SSL_CTX_set_cipher_list(ssl_ctx, ssl_ciphers);
   if (ret == 0) {
-    ERROR("openssl_initialise", "Call to `SSL_CTX_set_cipher_list(%s)` failed.\n", ALLOWED_SSL_CIPHERS);
+    ERROR("openssl_initialise", "Call to `SSL_CTX_set_cipher_list(%s)` failed.\n", ssl_ciphers);
     ERR_print_errors_fp(stderr);
     return NULL;
   }
@@ -122,6 +120,24 @@ openssl_initialise(const char *const certificate_chain_path, const char *const p
 void
 openssl_destroy(SSL_CTX *const ssl_ctx) {
   SSL_CTX_free(ssl_ctx);
+}
+
+
+const char *
+openssl_ERR_reason_error_string(unsigned long error) {
+  return ERR_reason_error_string(error);
+}
+
+
+const char *
+openssl_ERR_lib_error_string(unsigned long error) {
+  return ERR_lib_error_string(error);
+}
+
+
+const char *
+openssl_ERR_func_error_string(unsigned long error) {
+  return ERR_func_error_string(error);
 }
 
 

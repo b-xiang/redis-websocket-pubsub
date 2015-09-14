@@ -1,4 +1,5 @@
 #include <arpa/inet.h>
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
@@ -44,6 +45,7 @@ static int use_ssl = 0;
 static const char *ssl_certificate_chain_path = NULL;
 static const char *ssl_dh_params_path = NULL;
 static const char *ssl_private_key_path = NULL;
+static const char *ssl_ciphers = "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA:DHE-RSA-AES256-SHA";
 
 static const struct option ARGV_OPTIONS[] = {
   {"bind_host", required_argument, NULL, 'h'},
@@ -51,10 +53,11 @@ static const struct option ARGV_OPTIONS[] = {
   {"redis_host", required_argument, NULL, 'H'},
   {"redis_port", required_argument, NULL, 'P'},
   {"log", required_argument, NULL, 'l'},
-  {"use_ssl", no_argument, &use_ssl, 100},
-  {"ssl_certificate_chain", required_argument, NULL, 101},
-  {"ssl_dh_params", required_argument, NULL, 102},
-  {"ssl_private_key", required_argument, NULL, 103},
+  {"use_ssl", no_argument, &use_ssl, 1000},
+  {"ssl_certificate_chain", required_argument, NULL, 1001},
+  {"ssl_dh_params", required_argument, NULL, 1002},
+  {"ssl_private_key", required_argument, NULL, 1003},
+  {"ssl_ciphers", required_argument, NULL, 1004},
   {NULL, 0, NULL, 0},
 };
 
@@ -76,7 +79,14 @@ print_usage(FILE *const f) {
     if (opt->name == NULL) {
       break;
     }
-    fprintf(f, "  -%c --%s", (char)opt->val, opt->name);
+    fprintf(f, "  ");
+    if (isalpha(opt->val) || isdigit(opt->val)) {
+      fprintf(f, "-%c", (char)opt->val);
+    }
+    else {
+      fprintf(f, "  ");
+    }
+    fprintf(f, " --%s", opt->name);
     if (opt->has_arg) {
       fprintf(f, " arg");
     }
@@ -122,14 +132,17 @@ parse_argv(int argc, char *const *argv) {
     case 'l':
       log_path = optarg;
       break;
-    case 101:
+    case 1001:
       ssl_certificate_chain_path = optarg;
       break;
-    case 102:
+    case 1002:
       ssl_dh_params_path = optarg;
       break;
-    case 103:
+    case 1003:
       ssl_private_key_path = optarg;
+      break;
+    case 1004:
+      ssl_ciphers = optarg;
       break;
     case '?':  // Unknown option.
       print_usage(stderr);
@@ -346,7 +359,7 @@ main(int argc, char **argv) {
       ERROR0("main", "ssl_private_key is unset.\n");
       return 1;
     }
-    ssl_ctx = openssl_initialise(ssl_certificate_chain_path, ssl_private_key_path, ssl_dh_params_path);
+    ssl_ctx = openssl_initialise(ssl_certificate_chain_path, ssl_private_key_path, ssl_dh_params_path, ssl_ciphers);
     if (ssl_ctx == NULL) {
       return 1;
     }
