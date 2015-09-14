@@ -58,11 +58,11 @@ field-content  = <the OCTETs making up the field-value and consisting of either 
 generic-message = start-line *(message-header CRLF) CRLF [ message-body ]
 */
 
-static const uint8_t CTYPE_TEXT      = 1 << 0;
-static const uint8_t CTYPE_CHAR      = 1 << 1;
-static const uint8_t CTYPE_CTL       = 1 << 2;
-static const uint8_t CTYPE_SEPARATOR = 1 << 3;
-static const uint8_t CTYPE_TOKEN     = 1 << 4;
+#define CTYPE_TEXT      ((uint8_t)(1 << 0))
+#define CTYPE_CHAR      ((uint8_t)(1 << 1))
+#define CTYPE_CTL       ((uint8_t)(1 << 2))
+#define CTYPE_SEPARATOR ((uint8_t)(1 << 3))
+#define CTYPE_TOKEN     ((uint8_t)(1 << 4))
 
 static const uint8_t CTYPES[256] = {
   CTYPE_CTL | CTYPE_CHAR,  // 0x00

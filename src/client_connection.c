@@ -110,7 +110,7 @@ on_read(struct bufferevent *const bev, void *const arg) {
 
   // Read the data.
   const size_t nbytes = bufferevent_read(bev, buf, sizeof(buf));
-  DEBUG("on_read", "bufferevent_read read in %zu bytes from fd=%d client=%p\n", nbytes, client->fd, client);
+  DEBUG("on_read", "bufferevent_read read in %zu bytes from fd=%d client=%p\n", nbytes, client->fd, (void *)client);
   if (nbytes == 0) {
     return;
   }
@@ -121,7 +121,7 @@ on_read(struct bufferevent *const bev, void *const arg) {
     on_read_initial(client, buf, nbytes);
     // If we failed to process the HTTP request as a websocket establishing connection, drop the client.
     if (client->ws->in_state == WS_NEEDS_HTTP_UPGRADE) {
-      WARNING("on_read", "Failed to upgrade to websocket. Aborting connection on client=%p fd=%d\n", client, client->fd);
+      WARNING("on_read", "Failed to upgrade to websocket. Aborting connection on client=%p fd=%d\n", (void *)client, client->fd);
       client->needs_shutdown = true;
     }
   }
@@ -134,7 +134,7 @@ on_read(struct bufferevent *const bev, void *const arg) {
 static void
 on_write(struct bufferevent *const bev, void *const arg) {
   struct client_connection *const client = (struct client_connection *)arg;
-  DEBUG("on_write", "bev=%p client=%p fd=%d needs_shutdown=%d\n", bev, client, client->fd, client->needs_shutdown);
+  DEBUG("on_write", "bev=%p client=%p fd=%d needs_shutdown=%d\n", (void *)bev, (void *)client, client->fd, client->needs_shutdown);
   if (client->needs_shutdown) {
     client_connection_shutdown(client);
   }

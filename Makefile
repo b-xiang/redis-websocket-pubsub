@@ -4,18 +4,17 @@ SRC_DIR = src
 TEST_BIN_DIR = test-bin
 TEST_OBJ_DIR = test-objs
 
-CC = clang
 CFLAGS = \
 		-g -pedantic -std=c11 \
-		-Wall -Wextra -Werror -Wformat -Wformat-security -Werror=format-security -Wno-error=deprecated-declarations \
+		-Wall -Wextra -Werror -Wformat -Wformat-security -Werror=format-security \
 		-D_FORTIFY_SOURCE=2 -D_POSIX_SOURCE -D_BSD_SOURCE \
 		-I$(SRC_DIR)/ \
 		$(shell pkg-config --cflags hiredis) $(shell pkg-config --cflags libevent) $(shell pkg-config --cflags openssl)
 LDFLAGS = \
 		$(shell pkg-config --libs hiredis) $(shell pkg-config --libs libevent) $(shell pkg-config --libs openssl)
 
-TEST_CFLAGS = -fprofile-instr-generate -fcoverage-mapping
-TEST_LDFLAGS = -fprofile-instr-generate -fcoverage-mapping
+TEST_CFLAGS = -fprofile-arcs -ftest-coverage
+TEST_LDFLAGS = -fprofile-arcs -ftest-coverage
 
 BASE_HEADERS = \
 		$(SRC_DIR)/base64.h \
@@ -82,24 +81,24 @@ $(TEST_BIN_DIR):
 $(TEST_OBJ_DIR):
 	mkdir -p $@
 
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.c $(OBJ_DIR) $(BASE_HEADERS)
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.c $(BASE_HEADERS) | $(OBJ_DIR)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(TEST_OBJ_DIR)/%.o: $(SRC_DIR)/%.c $(TEST_OBJ_DIR) $(BASE_HEADERS)
+$(TEST_OBJ_DIR)/%.o: $(SRC_DIR)/%.c $(BASE_HEADERS) | $(TEST_OBJ_DIR)
 	$(CC) $(CFLAGS) $(TEST_CFLAGS) -c -o $@ $<
 
 
 $(BIN_DIR)/server: $(OBJ_DIR)/server.o $(OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^
+	$(CC) -o $@ $^ $(LDFLAGS)
 
 $(TEST_BIN_DIR)/test-base64: $(TEST_OBJ_DIR)/test-base64.o $(TEST_OBJECTS)
-	$(CC) $(LDFLAGS) $(TEST_LDFLAGS) -o $@ $^
+	$(CC) -o $@ $^ $(LDFLAGS) $(TEST_LDFLAGS)
 
 $(TEST_BIN_DIR)/test-http: $(TEST_OBJ_DIR)/test-http.o $(TEST_OBJECTS)
-	$(CC) $(LDFLAGS) $(TEST_LDFLAGS) -o $@ $^
+	$(CC) -o $@ $^ $(LDFLAGS) $(TEST_LDFLAGS)
 
 $(TEST_BIN_DIR)/test-json: $(TEST_OBJ_DIR)/test-json.o $(TEST_OBJECTS)
-	$(CC) $(LDFLAGS) $(TEST_LDFLAGS) -o $@ $^
+	$(CC) -o $@ $^ $(LDFLAGS) $(TEST_LDFLAGS)
 
 $(TEST_BIN_DIR)/test-pubsub: $(TEST_OBJ_DIR)/test-pubsub.o $(TEST_OBJECTS)
-	$(CC) $(LDFLAGS) $(TEST_LDFLAGS) -o $@ $^
+	$(CC) -o $@ $^ $(LDFLAGS) $(TEST_LDFLAGS)

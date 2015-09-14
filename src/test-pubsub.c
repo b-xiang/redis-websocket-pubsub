@@ -142,7 +142,7 @@ onmessage_sub_testtopic(redisAsyncContext *const ctx, void *const _reply, void *
   }
 
   if (reply->type == REDIS_REPLY_ARRAY) {
-    printf("[onmessage_sub_testtopic] ctx=%p reply=%p data=%p\n", ctx, reply, data);
+    printf("[onmessage_sub_testtopic] ctx=%p reply=%p data=%p\n", (void *)ctx, (void *)reply, (void *)data);
     for (size_t j = 0; j != reply->elements; j++) {
       printf("[onmessage_sub_testtopic]  %zu) %s\n", j, reply->element[j]->str);
     }
@@ -171,21 +171,21 @@ on_http_course_thread_request(struct evhttp_request *const req, redisAsyncContex
     evbuffer_free(response_buffer);
   }
 #endif
-  printf("[on_http_course_thread_request] req=%p ctx=%p id=%" PRIu64 "\n", req, ctx, id);
+  printf("[on_http_course_thread_request] req=%p ctx=%p id=%" PRIu64 "\n", (void *)req, (void *)ctx, id);
   evhttp_send_error(req, 501, NULL);  // 501: Not Implemented.
 }
 
 
 static void
 on_http_thread_request(struct evhttp_request *const req, redisAsyncContext *const ctx, const uint64_t id) {
-  printf("[on_http_course_thread_request] req=%p ctx=%p id=%" PRIu64 "\n", req, ctx, id);
+  printf("[on_http_course_thread_request] req=%p ctx=%p id=%" PRIu64 "\n", (void *)req, (void *)ctx, id);
   evhttp_send_error(req, 501, NULL);  // 501: Not Implemented.
 }
 
 
 static void
 on_http_user_thread_request(struct evhttp_request *const req, redisAsyncContext *const ctx, const uint64_t id) {
-  printf("[on_http_course_thread_request] req=%p ctx=%p id=%" PRIu64 "\n", req, ctx, id);
+  printf("[on_http_course_thread_request] req=%p ctx=%p id=%" PRIu64 "\n", (void *)req, (void *)ctx, id);
   evhttp_send_error(req, 501, NULL);  // 501: Not Implemented.
 }
 
@@ -199,7 +199,7 @@ on_http_request(struct evhttp_request *const req, void *const data) {
   const size_t regex_ngroups = 2;
   regmatch_t regex_groups[regex_ngroups];
 
-  printf("[on_http_request] req=%p data=%p\n", req, ctx);
+  printf("[on_http_request] req=%p data=%p\n", (void *)req, (void *)ctx);
 
   // Ensure we have a GET request.
   if (evhttp_request_get_command(req) != EVHTTP_REQ_GET) {

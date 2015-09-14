@@ -131,7 +131,7 @@ send_pong(struct websocket *const ws, struct evbuffer *const payload) {
 static void
 on_timeout_sendping(const evutil_socket_t fd, const short events, void *const arg) {
   struct websocket *const ws = (struct websocket *)arg;
-  DEBUG("on_timeout_sendping", "ws=%p fd=%d events=%d\n", ws, fd, events);
+  DEBUG("on_timeout_sendping", "ws=%p fd=%d events=%d\n", (void *)ws, fd, events);
 
   // Don't send a PING control frame while if the WebSocket isn't established.
   if (ws->in_state == WS_NEEDS_HTTP_UPGRADE || ws->in_state == WS_CLOSED) {
@@ -228,10 +228,14 @@ websocket_accept_http_request(struct websocket *const ws, struct http_response *
   }
   memcpy(sha1_input_buffer, header->value, key_nbytes);
   memcpy(sha1_input_buffer + key_nbytes, SEC_WEBSOCKET_KEY_GUID, guid_nbytes);
+#if defined(__APPLE__) && defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#endif
   SHA1(sha1_input_buffer, key_nbytes + guid_nbytes, sha1_output_buffer);
+#if defined(__APPLE__) && defined(__clang__)
 #pragma clang diagnostic pop
+#endif
   free(sha1_input_buffer);
 
   // Convert the SHA1 hash bytes into its base64 representation.

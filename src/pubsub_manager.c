@@ -88,7 +88,7 @@ on_connect(const redisAsyncContext *const ctx, const int status) {
     return;
   }
 
-  INFO("on_connect", "Connected to redis server. mgr=%p\n", mgr);
+  INFO("on_connect", "Connected to redis server. mgr=%p\n", (void *)mgr);
   if (ctx == mgr->pub_ctx) {
     mgr->pub_is_connected = true;
   }
@@ -113,7 +113,7 @@ on_disconnect(const redisAsyncContext *const ctx, const int status) {
     return;
   }
 
-  INFO("on_connect", "Disconnected from redis server. mgr=%p\n", mgr);
+  INFO("on_connect", "Disconnected from redis server. mgr=%p\n", (void *)mgr);
 }
 
 
@@ -245,7 +245,7 @@ on_subscribed_reply_message(struct pubsub_manager *const mgr, const char *const 
   // Write the JSON message to each of the websockets.
   for (value_chain = key_chain->chain; value_chain != NULL; value_chain = value_chain->next) {
     ws = (struct websocket *)value_chain->value;
-    DEBUG("on_subscribed_reply_message", "Sending to ws=%p via channel '%s'\n", ws, channel);
+    DEBUG("on_subscribed_reply_message", "Sending to ws=%p via channel '%s'\n", (void *)ws, channel);
     websocket_send_text(ws, mgr->out_json_buffer);
   }
 }
@@ -257,7 +257,7 @@ on_subscribed_reply(redisAsyncContext *const ctx, void *const _reply, void *cons
   const redisReply *const reply = _reply;
   struct websocket *const ws = privdata;
 
-  INFO("on_subscribed_reply", "mgr=%p reply=%p ws=%p\n", mgr, reply, ws);
+  INFO("on_subscribed_reply", "mgr=%p reply=%p ws=%p\n", (void *)mgr, (void *)reply, (void *)ws);
   if (reply == NULL) {
     return;
   }

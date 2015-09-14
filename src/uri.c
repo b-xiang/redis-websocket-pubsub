@@ -11,27 +11,28 @@
 
 #include "lexer.h"
 
-static const uint16_t CTYPE_NONE                = 0;
-static const uint16_t CTYPE_ALPHA               = 1 <<  0;
-static const uint16_t CTYPE_DIGIT               = 1 <<  1;
-static const uint16_t CTYPE_HEX                 = 1 <<  2;
-static const uint16_t CTYPE_MARK                = 1 <<  3;
-static const uint16_t CTYPE_RESERVED            = 1 <<  4;
-static const uint16_t CTYPE_PCHAR_EXTRA         = 1 <<  5;
-static const uint16_t CTYPE_USERINFO_EXTRA      = 1 <<  6;
-static const uint16_t CTYPE_REG_NAME_EXTRA      = 1 <<  7;
-static const uint16_t CTYPE_SCHEME_EXTRA        = 1 <<  8;
-static const uint16_t CTYPE_REL_SEGMENT_EXTRA   = 1 <<  9;
-static const uint16_t CTYPE_URIC_NO_SLASH_EXTRA = 1 << 10;
-static const uint16_t CTYPE_ALNUM         = CTYPE_ALPHA | CTYPE_DIGIT;
-static const uint16_t CTYPE_UNRESERVED    = CTYPE_ALNUM | CTYPE_MARK;
-static const uint16_t CTYPE_URIC          = CTYPE_RESERVED | CTYPE_UNRESERVED;
-static const uint16_t CTYPE_PCHAR         = CTYPE_UNRESERVED | CTYPE_PCHAR_EXTRA;
-static const uint16_t CTYPE_USERINFO      = CTYPE_UNRESERVED | CTYPE_USERINFO_EXTRA;
-static const uint16_t CTYPE_REG_NAME      = CTYPE_UNRESERVED | CTYPE_REG_NAME_EXTRA;
-static const uint16_t CTYPE_SCHEME        = CTYPE_ALNUM | CTYPE_SCHEME_EXTRA;
-static const uint16_t CTYPE_REL_SEGMENT   = CTYPE_UNRESERVED | CTYPE_REL_SEGMENT_EXTRA;
-static const uint16_t CTYPE_URIC_NO_SLASH = CTYPE_UNRESERVED | CTYPE_URIC_NO_SLASH_EXTRA;
+#define CTYPE_NONE                 ((uint16_t)(0))
+#define CTYPE_ALPHA                ((uint16_t)(1 <<  0))
+#define CTYPE_DIGIT                ((uint16_t)(1 <<  1))
+#define CTYPE_HEX                  ((uint16_t)(1 <<  2))
+#define CTYPE_MARK                 ((uint16_t)(1 <<  3))
+#define CTYPE_RESERVED             ((uint16_t)(1 <<  4))
+#define CTYPE_PCHAR_EXTRA          ((uint16_t)(1 <<  5))
+#define CTYPE_USERINFO_EXTRA       ((uint16_t)(1 <<  6))
+#define CTYPE_REG_NAME_EXTRA       ((uint16_t)(1 <<  7))
+#define CTYPE_SCHEME_EXTRA         ((uint16_t)(1 <<  8))
+#define CTYPE_REL_SEGMENT_EXTRA    ((uint16_t)(1 <<  9))
+#define CTYPE_URIC_NO_SLASH_EXTRA  ((uint16_t)(1 << 10))
+
+#define CTYPE_ALNUM          ((uint16_t)(CTYPE_ALPHA | CTYPE_DIGIT))
+#define CTYPE_UNRESERVED     ((uint16_t)(CTYPE_ALNUM | CTYPE_MARK))
+#define CTYPE_URIC           ((uint16_t)(CTYPE_RESERVED | CTYPE_UNRESERVED))
+#define CTYPE_PCHAR          ((uint16_t)(CTYPE_UNRESERVED | CTYPE_PCHAR_EXTRA))
+#define CTYPE_USERINFO       ((uint16_t)(CTYPE_UNRESERVED | CTYPE_USERINFO_EXTRA))
+#define CTYPE_REG_NAME       ((uint16_t)(CTYPE_UNRESERVED | CTYPE_REG_NAME_EXTRA))
+#define CTYPE_SCHEME         ((uint16_t)(CTYPE_ALNUM | CTYPE_SCHEME_EXTRA))
+#define CTYPE_REL_SEGMENT    ((uint16_t)(CTYPE_UNRESERVED | CTYPE_REL_SEGMENT_EXTRA))
+#define CTYPE_URIC_NO_SLASH  ((uint16_t)(CTYPE_UNRESERVED | CTYPE_URIC_NO_SLASH_EXTRA))
 
 static const uint16_t CTYPES[128] = {
   CTYPE_NONE,  // 0x00
