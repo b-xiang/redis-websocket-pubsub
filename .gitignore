@@ -1,5 +1,5 @@
 .*.sw[opq]
-*.o
-*.dSYM
-/test-*
-/libevent-2.0.22-stable*
+/bin
+/objs
+/test-bin
+/test-objs
