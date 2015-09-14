@@ -67,7 +67,7 @@ clean:
 	-rm -rf $(TEST_OBJECTS)
 
 wc:
-	find . -name '*.c' -or -name '*.h' | grep -v test- | xargs wc -l
+	find src -name '*.c' -or -name '*.h' | grep -v test- | xargs wc -l
 
 $(BIN_DIR):
 	mkdir -p $@
