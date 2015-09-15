@@ -362,7 +362,7 @@ consume_needs_masking_key(struct websocket *const ws, const uint8_t *const bytes
 static void
 consume_needs_payload(struct websocket *const ws, const uint8_t *const bytes, const size_t nbytes) {
   const uint8_t *upto;
-  uint8_t quad[4];
+  uint32_t quad;
   size_t slice, nbytes_remaining;
   assert(nbytes == ws->in_frame_nbytes);
 
@@ -375,9 +375,9 @@ consume_needs_payload(struct websocket *const ws, const uint8_t *const bytes, co
   upto = bytes;
   while (nbytes_remaining != 0) {
     slice = (nbytes_remaining >= 4) ? 4 : nbytes_remaining;
-    memcpy(quad, upto, slice);
-    *((uint32_t *)&quad[0]) ^= ws->in_frame_masking_key;
-    evbuffer_add(ws->in_frame_buffer, &quad[0], slice);
+    memcpy(&quad, upto, slice);
+    quad ^= ws->in_frame_masking_key;
+    evbuffer_add(ws->in_frame_buffer, &quad, slice);
     upto += slice;
     nbytes_remaining -= slice;
   }
