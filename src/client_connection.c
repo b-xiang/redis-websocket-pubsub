@@ -75,7 +75,7 @@ on_read_initial(struct client_connection *const client, const uint8_t *const buf
   }
 
   // TODO ensure that the host matches what we think we're serving.
-  DEBUG("on_read_initial", "Request is for host '%s'\n", client->request->host);
+  //DEBUG("on_read_initial", "Request is for host '%s'\n", client->request->host);
 
   // See if the HTTP request is accepted by the websocket protocol.
   status = websocket_accept_http_request(client->ws, client->response, client->request);
@@ -120,7 +120,6 @@ on_read(struct bufferevent *const bev, void *const arg) {
 
   // Read the data.
   const size_t nbytes = bufferevent_read(bev, buf, sizeof(buf));
-  DEBUG("on_read", "bufferevent_read read in %zu bytes from fd=%d client=%p\n", nbytes, client->fd, (void *)client);
   if (nbytes == 0) {
     return;
   }
@@ -133,6 +132,7 @@ on_read(struct bufferevent *const bev, void *const arg) {
     if (client->ws->in_state == WS_NEEDS_HTTP_UPGRADE) {
       WARNING("on_read", "Failed to upgrade to websocket. Aborting connection on client=%p fd=%d\n", (void *)client, client->fd);
       client->needs_shutdown = true;
+      client_connection_destroy(client);
     }
   }
   else {
@@ -143,8 +143,8 @@ on_read(struct bufferevent *const bev, void *const arg) {
 
 static void
 on_write(struct bufferevent *const bev, void *const arg) {
+  (void)bev;
   struct client_connection *const client = (struct client_connection *)arg;
-  DEBUG("on_write", "bev=%p client=%p fd=%d needs_shutdown=%d\n", (void *)bev, (void *)client, client->fd, client->needs_shutdown);
   if (client->needs_shutdown) {
     client_connection_shutdown(client);
   }

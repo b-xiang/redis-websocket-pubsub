@@ -273,7 +273,7 @@ setup_connection(const int fd) {
 
 static void
 on_accept(const int listen_fd, const short events, void *const arg) {
-  DEBUG("on_accept", "begin %d %d %p\n", listen_fd, events, arg);
+  (void)arg;
 
   // Ensure we have a read event.
   if (!(events & EV_READ)) {
