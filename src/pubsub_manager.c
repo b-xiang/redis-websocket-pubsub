@@ -287,6 +287,8 @@ on_subscribed_reply(redisAsyncContext *const ctx, void *const _reply, void *cons
 
 struct pubsub_manager *
 pubsub_manager_create(const char *const redis_host, const uint16_t redis_port, struct event_base *const event_base) {
+  INFO("pubsub_manager_create", "Using hiredis version %d.%d.%d\n", HIREDIS_MAJOR, HIREDIS_MINOR, HIREDIS_PATCH);
+
   int status;
   if (redis_host == NULL) {
     return NULL;
