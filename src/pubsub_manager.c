@@ -242,11 +242,15 @@ on_subscribed_reply_message(struct pubsub_manager *const mgr, const char *const 
   json_write_escape_string(mgr->out_json_buffer, message);
   evbuffer_add_printf(mgr->out_json_buffer, "}");
 
+  // Make the output JSON buffer a contiguous stream of bytes.
+  const char *const out_json = (const char *)evbuffer_pullup(mgr->out_json_buffer, -1);
+  const size_t out_json_nbytes = evbuffer_get_length(mgr->out_json_buffer);
+
   // Write the JSON message to each of the websockets.
   for (value_chain = key_chain->chain; value_chain != NULL; value_chain = value_chain->next) {
     ws = (struct websocket *)value_chain->value;
     DEBUG("on_subscribed_reply_message", "Sending to ws=%p via channel '%s'\n", (void *)ws, channel);
-    websocket_send_text(ws, mgr->out_json_buffer);
+    websocket_send_text_bytes(ws, out_json, out_json_nbytes);
   }
 }
 
