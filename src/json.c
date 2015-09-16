@@ -126,7 +126,7 @@ parse_number(struct lexer *const lex) {
 
   const int ret = sscanf(start, "%lf", &value->as.number);
   if (ret != 1) {
-    ERROR("parse", "Failed to scanf the double. ret=%d\n", ret);
+    ERROR("Failed to scanf the double. ret=%d\n", ret);
     json_value_destroy(value);
     return NULL;
   }
@@ -165,7 +165,7 @@ parse_object(struct lexer *const lex, struct evbuffer *const buffer) {
     if (i != 0) {
       lexer_consume_ws(lex);
       if (lexer_nremaining(lex) == 0 || lexer_peek(lex) != ',') {
-        DEBUG("parse_object", "failed to read ',' (%s)\n", lexer_upto(lex));
+        DEBUG("failed to read ',' (%s)\n", lexer_upto(lex));
         json_value_destroy(object);
         return NULL;
       }
@@ -187,7 +187,7 @@ parse_object(struct lexer *const lex, struct evbuffer *const buffer) {
 
     lexer_consume_ws(lex);
     if (lexer_nremaining(lex) == 0 || lexer_peek(lex) != ':') {
-      DEBUG0("parse_object", "failed to read ':'\n");
+      DEBUG0("failed to read ':'\n");
       free(string);
       json_value_destroy(object);
       return NULL;
@@ -197,7 +197,7 @@ parse_object(struct lexer *const lex, struct evbuffer *const buffer) {
 
     value = parse(lex, buffer);
     if (value == NULL) {
-      DEBUG0("parse_object", "failed to parse value\n");
+      DEBUG0("failed to parse value\n");
       free(string);
       json_value_destroy(object);
       return NULL;
@@ -205,7 +205,7 @@ parse_object(struct lexer *const lex, struct evbuffer *const buffer) {
 
     status = json_value_set_nocopy(object, string, value);
     if (status != STATUS_OK) {
-      DEBUG0("parse_object", "failed to json_value_set_nocopy\n");
+      DEBUG0("failed to json_value_set_nocopy\n");
       free(string);
       json_value_destroy(object);
       return NULL;
@@ -479,7 +479,7 @@ struct json_value *
 json_value_create(const enum json_value_type type) {
   struct json_value *const value = malloc(sizeof(struct json_value));
   if (value == NULL) {
-    ERROR0("json_value_create", "malloc failed\n");
+    ERROR0("malloc failed\n");
     return NULL;
   }
 

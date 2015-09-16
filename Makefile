@@ -79,6 +79,7 @@ analyze: clean
 		-enable-checker alpha.security.ReturnPtrRange \
 		-enable-checker alpha.security.taint.TaintPropagation \
 		-enable-checker alpha.unix.Chroot \
+		-enable-checker alpha.unix.MallocWithAnnotations \
 		-enable-checker alpha.unix.PthreadLock \
 		-enable-checker alpha.unix.cstring.BufferOverlap \
 		-enable-checker alpha.unix.cstring.NotNullTerminated \

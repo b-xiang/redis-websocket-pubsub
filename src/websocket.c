@@ -130,7 +130,7 @@ send_pong(struct websocket *const ws, struct evbuffer *const payload) {
 static void
 on_timeout_sendping(const evutil_socket_t fd, const short events, void *const arg) {
   struct websocket *const ws = (struct websocket *)arg;
-  DEBUG("on_timeout_sendping", "ws=%p fd=%d events=%d\n", (void *)ws, fd, events);
+  DEBUG("ws=%p fd=%d events=%d\n", (void *)ws, fd, events);
 
   // Don't send a PING control frame while if the WebSocket isn't established.
   if (ws->in_state == WS_NEEDS_HTTP_UPGRADE || ws->in_state == WS_CLOSED) {
@@ -260,7 +260,7 @@ websocket_accept_http_request(struct websocket *const ws, struct http_response *
   // Setup a periodic PING event.
   ws->ping_event = event_new(ws->client->event_loop, ws->client->fd, EV_PERSIST, &on_timeout_sendping, ws);
   if (ws->ping_event != NULL && event_add(ws->ping_event, &PING_INTERVAL) == -1) {
-    WARNING0("websocket_accept_http_request", "`event_add` for ping_event failed.\n");
+    WARNING0("`event_add` for ping_event failed.\n");
     event_del(ws->ping_event);
     event_free(ws->ping_event);
     ws->ping_event = NULL;
@@ -281,7 +281,7 @@ consume_needs_initial(struct websocket *const ws, const uint8_t *const bytes, co
 
   // Validate the reserved bits and the masking flag.
   // "MUST be 0 unless an extension is negotiated that defines meanings for non-zero values."
-  DEBUG("consume_needs_initial", "Received new frame header fin=%u reserved=%u opcode=%u is_masked=%u, length=%" PRIu64 "\n", ws->in_frame_is_final, in_reserved, ws->in_frame_opcode, in_is_masked, ws->in_frame_nbytes);
+  DEBUG("Received new frame header fin=%u reserved=%u opcode=%u is_masked=%u, length=%" PRIu64 "\n", ws->in_frame_is_final, in_reserved, ws->in_frame_opcode, in_is_masked, ws->in_frame_nbytes);
   if (in_reserved != 0) {
     ws->in_state = WS_CLOSED;
     return;
@@ -308,7 +308,7 @@ consume_needs_initial(struct websocket *const ws, const uint8_t *const bytes, co
 
   // Close the connection if required.
   if (ws->in_frame_opcode == WS_OPCODE_CONNECTION_CLOSE) {
-    DEBUG("consume_needs_payload", "Closing client on fd=%d due to CLOSE opcode.\n", ws->client->fd);
+    DEBUG("Closing client on fd=%d due to CLOSE opcode.\n", ws->client->fd);
     ws->in_state = WS_CLOSED;
     return;
   }
@@ -385,10 +385,10 @@ consume_needs_payload(struct websocket *const ws, const uint8_t *const bytes, co
   // Update our state.
   switch (ws->in_frame_opcode) {
   case WS_OPCODE_CONTINUATION_FRAME:
-    DEBUG("consume_needs_payload", "Received CONTINUATION frame on fd=%d. is_final=%d\n", ws->client->fd, ws->in_frame_is_final);
+    DEBUG("Received CONTINUATION frame on fd=%d. is_final=%d\n", ws->client->fd, ws->in_frame_is_final);
     // Ensure we are expecting a continuation frame.
     if (!ws->in_message_is_continuing) {
-      ERROR0("consume_needs_payload", "Unexpected continuation frame. Closing WebSocket connection.\n");
+      ERROR0("Unexpected continuation frame. Closing WebSocket connection.\n");
       ws->in_state = WS_CLOSED;
       break;
     }
@@ -409,7 +409,7 @@ consume_needs_payload(struct websocket *const ws, const uint8_t *const bytes, co
     break;
 
   case WS_OPCODE_TEXT_FRAME:
-    DEBUG("consume_needs_payload", "Received TEXT frame on fd=%d. is_final=%d\n", ws->client->fd, ws->in_frame_is_final);
+    DEBUG("Received TEXT frame on fd=%d. is_final=%d\n", ws->client->fd, ws->in_frame_is_final);
     ws->in_message_is_binary = false;
     if (ws->in_frame_is_final) {
       ws->in_message_is_continuing = false;
@@ -432,7 +432,7 @@ consume_needs_payload(struct websocket *const ws, const uint8_t *const bytes, co
     break;
 
   case WS_OPCODE_BINARY_FRAME:
-    DEBUG("consume_needs_payload", "Received BINARY frame on fd=%d. is_final=%d\n", ws->client->fd, ws->in_frame_is_final);
+    DEBUG("Received BINARY frame on fd=%d. is_final=%d\n", ws->client->fd, ws->in_frame_is_final);
     ws->in_message_is_binary = true;
     if (ws->in_frame_is_final) {
       ws->in_message_is_continuing = false;
@@ -455,13 +455,13 @@ consume_needs_payload(struct websocket *const ws, const uint8_t *const bytes, co
     break;
 
   case WS_OPCODE_CONNECTION_CLOSE:
-    DEBUG("consume_needs_payload", "Closing client on fd=%d due to CLOSE opcode.\n", ws->client->fd);
+    DEBUG("Closing client on fd=%d due to CLOSE opcode.\n", ws->client->fd);
     // Close the connection.
     ws->in_state = WS_CLOSED;
     break;
 
   case WS_OPCODE_PING:
-    DEBUG("consume_needs_payload", "Received PING from fd=%d. Sending PONG.\n", ws->client->fd);
+    DEBUG("Received PING from fd=%d. Sending PONG.\n", ws->client->fd);
     // "Upon receipt of a Ping frame, an endpoint MUST send a Pong frame in response, unless it
     // already received a Close frame. It SHOULD respond with Pong frame as soon as is practical."
     send_pong(ws, ws->in_frame_buffer);
@@ -472,7 +472,7 @@ consume_needs_payload(struct websocket *const ws, const uint8_t *const bytes, co
     break;
 
   case WS_OPCODE_PONG:
-    DEBUG("consume_needs_payload", "Received PONG from fd=%d. Doing nothing.\n", ws->client->fd);
+    DEBUG("Received PONG from fd=%d. Doing nothing.\n", ws->client->fd);
     // Don't do anything in response to receiving a pong frame.
     // Reset our state to waiting for a new frame.
     ws->in_state = WS_NEEDS_INITIAL;
@@ -481,7 +481,7 @@ consume_needs_payload(struct websocket *const ws, const uint8_t *const bytes, co
 
   default:
     // Close the connection since we received an unknown opcode.
-    ERROR("consume_needs_payload", "Unknown opcode %u\n", ws->in_frame_opcode);
+    ERROR("Unknown opcode %u\n", ws->in_frame_opcode);
     ws->in_state = WS_CLOSED;
     break;
   }
@@ -512,7 +512,7 @@ websocket_consume(struct websocket *const ws, const uint8_t *const bytes, const 
     break;
 
   default:
-    ERROR("websocket_consume", "Unknown websocket state %d\n", ws->in_state);
+    ERROR("Unknown websocket state %d\n", ws->in_state);
     ws->in_state = WS_CLOSED;
     break;
   }

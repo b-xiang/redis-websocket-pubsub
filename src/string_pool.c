@@ -24,7 +24,7 @@ struct string_pool *
 string_pool_create(void) {
   struct string_pool *const pool = malloc(sizeof(struct string_pool));
   if (pool == NULL) {
-    ERROR0("string_pool_create", "malloc failed.\n");
+    ERROR0("malloc failed.\n");
     return NULL;
   }
   memset(pool, 0, sizeof(struct string_pool));
@@ -78,7 +78,7 @@ string_pool_get(struct string_pool *const pool, const char *const lookup) {
     node = malloc(sizeof(struct node));
     str = malloc(lookup_length + 1);
     if (node == NULL || str == NULL) {
-      ERROR0("string_pool_get", "malloc failed.\n");
+      ERROR0("malloc failed.\n");
       free(node);
       free(str);
       return NULL;

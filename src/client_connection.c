@@ -30,21 +30,21 @@ client_connection_onevent(struct bufferevent *const bev, const short events, voi
   struct client_connection *const client = (struct client_connection *)arg;
 
   if (events & BEV_EVENT_EOF) {
-    INFO("client_connection_onevent", "Remote host disconnected on fd=%d\n", client->fd);
+    INFO("Remote host disconnected on fd=%d\n", client->fd);
     client->is_shutdown = true;
   }
   else if (events & BEV_EVENT_ERROR) {
-    WARNING("client_connection_onevent", "Got an error on fd=%d: %s\n", client->fd, evutil_socket_error_to_string(EVUTIL_SOCKET_ERROR()));
+    WARNING("Got an error on fd=%d: %s\n", client->fd, evutil_socket_error_to_string(EVUTIL_SOCKET_ERROR()));
     unsigned long err;
     while ((err = bufferevent_get_openssl_error(bev))) {
-      WARNING("client_connection_onevent", "bufferevent_get_openssl_error:%s:%s:%s\n", openssl_ERR_reason_error_string(err), openssl_ERR_lib_error_string(err), openssl_ERR_func_error_string(err));
+      WARNING("bufferevent_get_openssl_error:%s:%s:%s\n", openssl_ERR_reason_error_string(err), openssl_ERR_lib_error_string(err), openssl_ERR_func_error_string(err));
     }
   }
   else if (events & EVBUFFER_TIMEOUT) {
-    INFO("client_connection_onevent", "Remote host timed out on fd=%d\n", client->fd);
+    INFO("Remote host timed out on fd=%d\n", client->fd);
   }
   else {
-    WARNING("client_connection_onevent", "Remote host experienced an unknown error (0x%08x) on fd=%d\n", events, client->fd);
+    WARNING("Remote host experienced an unknown error (0x%08x) on fd=%d\n", events, client->fd);
   }
   client_connection_destroy(client);
 }
@@ -58,13 +58,13 @@ on_read_initial(struct client_connection *const client, const uint8_t *const buf
 
   // Initialise our required data structures.
   if (!lexer_init(&lex, (const char *)&buf[0], (const char *)&buf[0] + nbytes)) {
-    ERROR0("on_read_initial", "failed to construct lexer instance (`lexer_init` failed)\n");
+    ERROR0("failed to construct lexer instance (`lexer_init` failed)\n");
     return;
   }
 
   // Try and parse the HTTP request.
   if ((status = http_request_parse(client->request, &lex)) != STATUS_OK) {
-    WARNING("on_read_initial", "failed to parse the HTTP request. status=%d\n", status);
+    WARNING("failed to parse the HTTP request. status=%d\n", status);
     lexer_destroy(&lex);
     return;
   }
@@ -75,27 +75,27 @@ on_read_initial(struct client_connection *const client, const uint8_t *const buf
   }
 
   // TODO ensure that the host matches what we think we're serving.
-  //DEBUG("on_read_initial", "Request is for host '%s'\n", client->request->host);
+  //DEBUG("Request is for host '%s'\n", client->request->host);
 
   // See if the HTTP request is accepted by the websocket protocol.
   status = websocket_accept_http_request(client->ws, client->response, client->request);
   if (status != STATUS_OK) {
-    WARNING("on_read_initial", "websocket_accept_http_request failed. status=%d\n", status);
+    WARNING("websocket_accept_http_request failed. status=%d\n", status);
   }
 
   // Flush the output buffer.
   status = http_response_write_evbuffer(client->response, client->ws->out);
   if (status != STATUS_OK) {
-    WARNING("on_read_initial", "http_response_write_evbuffer failed. status=%d\n", status);
+    WARNING("http_response_write_evbuffer failed. status=%d\n", status);
   }
   status = websocket_flush_output(client->ws);
   if (status != STATUS_OK) {
-    WARNING("on_read_initial", "websocket_flush_output failed. status=%d\n", status);
+    WARNING("websocket_flush_output failed. status=%d\n", status);
   }
 
   // Free up resources.
   if (!lexer_destroy(&lex)) {
-    ERROR0("on_read_initial", "failed to destroy lexer instance (`lexer_destroy` failed)\n");
+    ERROR0("failed to destroy lexer instance (`lexer_destroy` failed)\n");
   }
 }
 
@@ -104,7 +104,7 @@ static void
 on_read_websocket(struct client_connection *const client, const uint8_t *const buf, const size_t nbytes) {
   enum status status = websocket_consume(client->ws, buf, nbytes);
   if (status != STATUS_OK) {
-    WARNING("on_read_websocket", "websocket_consume failed. status=%d\n", status);
+    WARNING("websocket_consume failed. status=%d\n", status);
   }
   if (client->ws->in_state == WS_CLOSED) {
     client_connection_destroy(client);
@@ -130,7 +130,7 @@ on_read(struct bufferevent *const bev, void *const arg) {
     on_read_initial(client, buf, nbytes);
     // If we failed to process the HTTP request as a websocket establishing connection, drop the client.
     if (client->ws->in_state == WS_NEEDS_HTTP_UPGRADE) {
-      WARNING("on_read", "Failed to upgrade to websocket. Aborting connection on client=%p fd=%d\n", (void *)client, client->fd);
+      WARNING("Failed to upgrade to websocket. Aborting connection on client=%p fd=%d\n", (void *)client, client->fd);
       client->needs_shutdown = true;
       client_connection_destroy(client);
     }
@@ -156,7 +156,7 @@ client_connection_create(struct event_base *const event_loop, SSL_CTX *const ssl
   // Construct the client connection object.
   struct client_connection *const client = malloc(sizeof(struct client_connection));
   if (client == NULL) {
-    ERROR("client_connection_create", "failed to malloc: %s\n", strerror(errno));
+    ERROR("failed to malloc: %s\n", strerror(errno));
     return NULL;
   }
 
@@ -237,7 +237,7 @@ _client_connection_destroy(struct client_connection *const client) {
   if (client->fd >= 0) {
     client_connection_shutdown(client);
     if (close(client->fd) == -1) {
-      WARNING("_client_connection_destroy", "`close` on fd=%d failed: %s\n", client->fd, strerror(errno));
+      WARNING("`close` on fd=%d failed: %s\n", client->fd, strerror(errno));
     }
   }
 
@@ -293,7 +293,7 @@ client_connection_shutdown(struct client_connection *const client) {
     }
     ret = shutdown(client->fd, SHUT_RDWR);
     if (ret != 0) {
-      WARNING("client_connection_shutdown", "`shutdown` on fd=%d failed: %s\n", client->fd, strerror(errno));
+      WARNING("`shutdown` on fd=%d failed: %s\n", client->fd, strerror(errno));
     }
   }
 

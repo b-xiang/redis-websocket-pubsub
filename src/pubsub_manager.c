@@ -84,11 +84,11 @@ on_connect(const redisAsyncContext *const ctx, const int status) {
   struct pubsub_manager *const mgr = (struct pubsub_manager *)ctx->data;
 
   if (status != REDIS_OK) {
-    ERROR("on_connect", "Error in on_connect redis callback. status=%d error=%s\n", status, ctx->errstr);
+    ERROR("Error in on_connect redis callback. status=%d error=%s\n", status, ctx->errstr);
     return;
   }
 
-  INFO("on_connect", "Connected to redis server. mgr=%p\n", (void *)mgr);
+  INFO("Connected to redis server. mgr=%p\n", (void *)mgr);
   if (ctx == mgr->pub_ctx) {
     mgr->pub_is_connected = true;
   }
@@ -109,11 +109,11 @@ on_disconnect(const redisAsyncContext *const ctx, const int status) {
   }
 
   if (status != REDIS_OK) {
-    ERROR("on_connect", "Error in on_disconnect redis callback. status=%d error=%s\n", status, ctx->errstr);
+    ERROR("Error in on_disconnect redis callback. status=%d error=%s\n", status, ctx->errstr);
     return;
   }
 
-  INFO("on_connect", "Disconnected from redis server. mgr=%p\n", (void *)mgr);
+  INFO("Disconnected from redis server. mgr=%p\n", (void *)mgr);
 }
 
 
@@ -141,7 +141,7 @@ on_subscribed_reply_subscribe(struct pubsub_manager *const mgr, struct websocket
     // Create the key chain node for the channel to websockets mapping.
     key_chain = malloc(sizeof(struct key_chain));
     if (key_chain == NULL) {
-      ERROR0("on_subscribed_reply_subscribe", "malloc failed.\n");
+      ERROR0("malloc failed.\n");
       string_pool_release(mgr->string_pool, canonical_channel);
       free(key_chain);
       return;
@@ -162,7 +162,7 @@ on_subscribed_reply_subscribe(struct pubsub_manager *const mgr, struct websocket
   // Insert the websocket into the chain.
   value_chain = malloc(sizeof(struct value_chain));
   if (value_chain == NULL) {
-    ERROR0("on_subscribed_reply_subscribe", "malloc failed.\n");
+    ERROR0("malloc failed.\n");
     string_pool_release(mgr->string_pool, canonical_channel);
     return;
   }
@@ -185,7 +185,7 @@ on_subscribed_reply_subscribe(struct pubsub_manager *const mgr, struct websocket
     // Create the key chain node for the channel to websockets mapping.
     key_chain = malloc(sizeof(struct key_chain));
     if (key_chain == NULL) {
-      ERROR0("on_subscribed_reply_subscribe", "malloc failed.\n");
+      ERROR0("malloc failed.\n");
       free(key_chain);
       return;
     }
@@ -204,7 +204,7 @@ on_subscribed_reply_subscribe(struct pubsub_manager *const mgr, struct websocket
   // Insert the channel into the chain.
   value_chain = malloc(sizeof(struct value_chain));
   if (value_chain == NULL) {
-    ERROR0("on_subscribed_reply_subscribe", "malloc failed.\n");
+    ERROR0("malloc failed.\n");
     return;
   }
   value_chain->value = (void *)canonical_channel;
@@ -249,7 +249,7 @@ on_subscribed_reply_message(struct pubsub_manager *const mgr, const char *const 
   // Write the JSON message to each of the websockets.
   for (value_chain = key_chain->chain; value_chain != NULL; value_chain = value_chain->next) {
     ws = (struct websocket *)value_chain->value;
-    DEBUG("on_subscribed_reply_message", "Sending to ws=%p via channel '%s'\n", (void *)ws, channel);
+    DEBUG("Sending to ws=%p via channel '%s'\n", (void *)ws, channel);
     websocket_send_text_bytes(ws, out_json, out_json_nbytes);
   }
 }
@@ -261,14 +261,14 @@ on_subscribed_reply(redisAsyncContext *const ctx, void *const _reply, void *cons
   const redisReply *const reply = _reply;
   struct websocket *const ws = privdata;
 
-  INFO("on_subscribed_reply", "mgr=%p reply=%p ws=%p\n", (void *)mgr, (void *)reply, (void *)ws);
+  INFO("mgr=%p reply=%p ws=%p\n", (void *)mgr, (void *)reply, (void *)ws);
   if (reply == NULL) {
     return;
   }
   else if (reply->type != REDIS_REPLY_ARRAY || reply->elements != 3) {
     return;
   }
-  DEBUG("on_subscribed_reply", "Received %s %s %s\n", reply->element[0]->str, reply->element[1]->str, reply->element[2]->str);
+  DEBUG("Received %s %s %s\n", reply->element[0]->str, reply->element[1]->str, reply->element[2]->str);
 
   if (strcmp(reply->element[0]->str, "subscribe") == 0) {
     on_subscribed_reply_subscribe(mgr, ws, reply->element[1]->str);
@@ -280,14 +280,14 @@ on_subscribed_reply(redisAsyncContext *const ctx, void *const _reply, void *cons
     // Do nothing.
   }
   else {
-    ERROR("on_subscribed_reply", "Received unknown message on subscription channel '%s' '%s' '%s'\n", reply->element[0]->str, reply->element[1]->str, reply->element[2]->str);
+    ERROR("Received unknown message on subscription channel '%s' '%s' '%s'\n", reply->element[0]->str, reply->element[1]->str, reply->element[2]->str);
   }
 }
 
 
 struct pubsub_manager *
 pubsub_manager_create(const char *const redis_host, const uint16_t redis_port, struct event_base *const event_base) {
-  INFO("pubsub_manager_create", "Using hiredis version %d.%d.%d\n", HIREDIS_MAJOR, HIREDIS_MINOR, HIREDIS_PATCH);
+  INFO("Using hiredis version %d.%d.%d\n", HIREDIS_MAJOR, HIREDIS_MINOR, HIREDIS_PATCH);
 
   int status;
   if (redis_host == NULL) {
@@ -297,7 +297,7 @@ pubsub_manager_create(const char *const redis_host, const uint16_t redis_port, s
   // Setup the pubsub manager.
   struct pubsub_manager *const mgr = malloc(sizeof(struct pubsub_manager));
   if (mgr == NULL) {
-    ERROR0("pubsub_manager_create", "malloc failed.\n");
+    ERROR0("malloc failed.\n");
     return NULL;
   }
   memset(mgr, 0, sizeof(struct pubsub_manager));
@@ -315,7 +315,7 @@ pubsub_manager_create(const char *const redis_host, const uint16_t redis_port, s
   mgr->pub_ctx = redisAsyncConnect(redis_host, redis_port);
   mgr->sub_ctx = redisAsyncConnect(redis_host, redis_port);
   if (mgr->pub_ctx == NULL || mgr->sub_ctx == NULL) {
-    ERROR("pubsub_manager_create", "Failed to connect to redis server %s:%d\n", redis_host, redis_port);
+    ERROR("Failed to connect to redis server %s:%d\n", redis_host, redis_port);
     goto fail;
   }
   // Set the redis async context's user data attribute to be our manager object.
@@ -325,34 +325,34 @@ pubsub_manager_create(const char *const redis_host, const uint16_t redis_port, s
   // Attach the redis async connection to the libevent event loop.
   status = redisLibeventAttach(mgr->pub_ctx, mgr->event_base);
   if (status != REDIS_OK) {
-    ERROR("pubsub_manager_create", "Failed to `redisLibeventAttach`. status=%d\n", status);
+    ERROR("Failed to `redisLibeventAttach`. status=%d\n", status);
     goto fail;
   }
   status = redisLibeventAttach(mgr->sub_ctx, mgr->event_base);
   if (status != REDIS_OK) {
-    ERROR("pubsub_manager_create", "Failed to `redisLibeventAttach`. status=%d\n", status);
+    ERROR("Failed to `redisLibeventAttach`. status=%d\n", status);
     goto fail;
   }
 
   // Setup the redis connect/disconnect callbacks.
   status = redisAsyncSetConnectCallback(mgr->pub_ctx, &on_connect);
   if (status != REDIS_OK) {
-    ERROR("pubsub_manager_create", "Failed to `redisAsyncSetConnectCallback`. status=%d\n", status);
+    ERROR("Failed to `redisAsyncSetConnectCallback`. status=%d\n", status);
     goto fail;
   }
   status = redisAsyncSetDisconnectCallback(mgr->pub_ctx, &on_disconnect);
   if (status != REDIS_OK) {
-    ERROR("pubsub_manager_create", "Failed to `redisAsyncSetDisconnectCallback`. status=%d\n", status);
+    ERROR("Failed to `redisAsyncSetDisconnectCallback`. status=%d\n", status);
     goto fail;
   }
   status = redisAsyncSetConnectCallback(mgr->sub_ctx, &on_connect);
   if (status != REDIS_OK) {
-    ERROR("pubsub_manager_create", "Failed to `redisAsyncSetConnectCallback`. status=%d\n", status);
+    ERROR("Failed to `redisAsyncSetConnectCallback`. status=%d\n", status);
     goto fail;
   }
   status = redisAsyncSetDisconnectCallback(mgr->sub_ctx, &on_disconnect);
   if (status != REDIS_OK) {
-    ERROR("pubsub_manager_create", "Failed to `redisAsyncSetDisconnectCallback`. status=%d\n", status);
+    ERROR("Failed to `redisAsyncSetDisconnectCallback`. status=%d\n", status);
     goto fail;
   }
 
@@ -411,7 +411,7 @@ pubsub_manager_publish_n(struct pubsub_manager *const mgr, const char *const cha
 
   status = redisAsyncCommand(mgr->pub_ctx, NULL, NULL, "PUBLISH %s %b", channel, message, message_nbytes);
   if (status != REDIS_OK) {
-    ERROR("pubsub_manager_publish_n", "async `PUBLISH %s` command failed. status=%d\n", channel, status);
+    ERROR("async `PUBLISH %s` command failed. status=%d\n", channel, status);
     return STATUS_BAD;
   }
 
@@ -438,7 +438,7 @@ pubsub_manager_subscribe(struct pubsub_manager *const mgr, const char *const cha
       const char *const canonical_channel = string_pool_get(mgr->string_pool, channel);
       for (struct value_chain *value_chain = key_chain->chain; value_chain != NULL; value_chain = value_chain->next) {
         if (value_chain->value == canonical_channel) {
-          DEBUG("pubsub_manager_subscribe", "Not re-subscribing to channel '%s'\n", channel);
+          DEBUG("Not re-subscribing to channel '%s'\n", channel);
           string_pool_release(mgr->string_pool, canonical_channel);
           return STATUS_OK;
         }
@@ -448,10 +448,10 @@ pubsub_manager_subscribe(struct pubsub_manager *const mgr, const char *const cha
     }
   }
 
-  DEBUG("pubsub_manager_subscribe", "Subscribing to channel '%s'\n", channel);
+  DEBUG("Subscribing to channel '%s'\n", channel);
   status = redisAsyncCommand(mgr->sub_ctx, &on_subscribed_reply, ws, "SUBSCRIBE %s", channel);
   if (status != REDIS_OK) {
-    ERROR("pubsub_manager_publish_n", "async `SUBSCRIBE %s` command failed. status=%d\n", channel, status);
+    ERROR("async `SUBSCRIBE %s` command failed. status=%d\n", channel, status);
     return STATUS_BAD;
   }
 
@@ -501,7 +501,7 @@ remove_websocket_from_channel_chain(struct pubsub_manager *const mgr, const char
     // Unsubscribe from the channel.
     redis_status = redisAsyncCommand(mgr->sub_ctx, NULL, NULL, "UNSUBSCRIBE %s", canonical_channel);
     if (redis_status != REDIS_OK) {
-      ERROR("remove_websocket_from_channel_chain", "async `UNSUBSCRIBE %s` command failed. status=%d\n", canonical_channel, redis_status);
+      ERROR("async `UNSUBSCRIBE %s` command failed. status=%d\n", canonical_channel, redis_status);
       status = STATUS_BAD;
     }
 

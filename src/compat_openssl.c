@@ -35,12 +35,12 @@ openssl_initialise(const char *const certificate_chain_path, const char *const p
   SSL_load_error_strings();
   SSL_library_init();
   OpenSSL_add_all_algorithms();
-  INFO("openssl_initialise", "OpenSSL version: %s\n", SSLeay_version(SSLEAY_VERSION));
+  INFO("OpenSSL version: %s\n", SSLeay_version(SSLEAY_VERSION));
 
   // Initialise OpenSSL's random.
   ret = RAND_poll();
   if (ret == 0) {
-    ERROR0("openssl_initialise", "Call to `RAND_poll` failed.\n");
+    ERROR0("Call to `RAND_poll` failed.\n");
     ERR_print_errors_fp(stderr);
     return NULL;
   }
@@ -48,7 +48,7 @@ openssl_initialise(const char *const certificate_chain_path, const char *const p
   // Create a SSL context object.
   SSL_CTX *const ssl_ctx = SSL_CTX_new(SSLv23_method());
   if (ssl_ctx == NULL) {
-    ERROR0("openssl_initialise", "Call to `SSL_CTX_new` failed.\n");
+    ERROR0("Call to `SSL_CTX_new` failed.\n");
     ERR_print_errors_fp(stderr);
     return NULL;
   }
@@ -57,7 +57,7 @@ openssl_initialise(const char *const certificate_chain_path, const char *const p
   // Explicitly set the ciphers.
   ret = SSL_CTX_set_cipher_list(ssl_ctx, ssl_ciphers);
   if (ret == 0) {
-    ERROR("openssl_initialise", "Call to `SSL_CTX_set_cipher_list(%s)` failed.\n", ssl_ciphers);
+    ERROR("Call to `SSL_CTX_set_cipher_list(%s)` failed.\n", ssl_ciphers);
     ERR_print_errors_fp(stderr);
     return NULL;
   }
@@ -65,12 +65,12 @@ openssl_initialise(const char *const certificate_chain_path, const char *const p
   // Set the EC parameters for ECDH.
   EC_KEY *const ecdh = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1);
   if (ecdh == NULL) {
-    ERROR0("openssl_initialise", "Call to `EC_KEY_new_by_curve_name` failed.\n");
+    ERROR0("Call to `EC_KEY_new_by_curve_name` failed.\n");
     ERR_print_errors_fp(stderr);
     return NULL;
   }
   if (SSL_CTX_set_tmp_ecdh(ssl_ctx, ecdh) != 1) {
-    ERROR0("openssl_initialise", "Call to `SSL_CTX_set_tmp_ecdh` failed.\n");
+    ERROR0("Call to `SSL_CTX_set_tmp_ecdh` failed.\n");
     ERR_print_errors_fp(stderr);
     return NULL;
   }
@@ -79,17 +79,17 @@ openssl_initialise(const char *const certificate_chain_path, const char *const p
   {
     FILE *const dh_params_file = fopen(dh_params_path, "r");
     if (dh_params_file == NULL) {
-      ERROR("openssl_initialise", "Failed to open DH params file '%s' for reading: %s\n", dh_params_path, strerror(errno));
+      ERROR("Failed to open DH params file '%s' for reading: %s\n", dh_params_path, strerror(errno));
       return NULL;
     }
     DH *const dh_params = PEM_read_DHparams(dh_params_file, NULL, NULL, NULL);
     if (dh_params == NULL) {
-      ERROR0("openssl_initialise", "Call to `PEM_read_DHparams` failed.\n");
+      ERROR0("Call to `PEM_read_DHparams` failed.\n");
       ERR_print_errors_fp(stderr);
       return NULL;
     }
     if (SSL_CTX_set_tmp_dh(ssl_ctx, dh_params) != 1) {
-      ERROR0("openssl_initialise", "Call to `SSL_CTX_set_tmp_dh` failed.\n");
+      ERROR0("Call to `SSL_CTX_set_tmp_dh` failed.\n");
       ERR_print_errors_fp(stderr);
       return NULL;
     }
@@ -98,17 +98,17 @@ openssl_initialise(const char *const certificate_chain_path, const char *const p
 
   // Load and check the SSL certificate.
   if (SSL_CTX_use_certificate_chain_file(ssl_ctx, certificate_chain_path) != 1) {
-    ERROR0("openssl_initialise", "Call to `SSL_CTX_use_certificate_chain_file` failed.\n");
+    ERROR0("Call to `SSL_CTX_use_certificate_chain_file` failed.\n");
     ERR_print_errors_fp(stderr);
     return NULL;
   }
   if (SSL_CTX_use_PrivateKey_file(ssl_ctx, private_key_path, SSL_FILETYPE_PEM) != 1) {
-    ERROR0("openssl_initialise", "Call to `SSL_CTX_use_PrivateKey_file` failed.\n");
+    ERROR0("Call to `SSL_CTX_use_PrivateKey_file` failed.\n");
     ERR_print_errors_fp(stderr);
     return NULL;
   }
   if (SSL_CTX_check_private_key(ssl_ctx) != 1) {
-    ERROR0("openssl_initialise", "Call to `SSL_CTX_check_private_key` failed.\n");
+    ERROR0("Call to `SSL_CTX_check_private_key` failed.\n");
     ERR_print_errors_fp(stderr);
     return NULL;
   }
