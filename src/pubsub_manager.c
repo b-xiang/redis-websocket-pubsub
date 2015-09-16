@@ -641,7 +641,7 @@ pubsub_manager_unsubscribe_all(struct pubsub_manager *const mgr, struct websocke
     mgr->websocket_buckets[bucket] = key_chain->next;
   }
   else {
-    prev_key_chain = key_chain->next;
+    prev_key_chain->next = key_chain->next;
   }
   free(key_chain);
 
